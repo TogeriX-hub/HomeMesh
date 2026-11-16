@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "../SampleData.h"
+#include "../../RemoteCommands.h"
 
 using namespace homemesh;
 
@@ -33,8 +34,22 @@ struct PendingAck { int conv, msg; uint32_t due; };
 static PendingAck acks[8];
 static int ack_count = 0;
 
+static uint32_t wifi_connect_due = 0;
+static int brightness = 80;
+
 class WebActions : public SimActions {
 public:
+  void saveSettings() override {}
+  void wifiScan() override { sampleNetworks(); }
+  void wifiConnect(const char* ssid, const char*) override {
+    copyText(model.wifi_ssid, sizeof(model.wifi_ssid), ssid);
+    model.wifi_connected = false;
+    wifi_connect_due = now_ms + 2000;
+  }
+  void wifiForget() override { model.wifi_ssid[0] = 0; model.wifi_connected = false; }
+  void startUpdate() override { model.update_running = true; }
+  void stopUpdate() override { model.update_running = false; }
+  void setBrightness(uint8_t p) override { brightness = p; }
   void sendDirect(int conv, const char* text) override {
     SimActions::sendDirect(conv, text);
     queueAck(conv, model.convs[conv].log.count - 1);
@@ -102,10 +117,25 @@ EXPORT(hm_frame) void hm_frame(uint32_t ms) {
       i++;
     }
   }
+  model.uptime_s = 3 * 86400 + now_ms / 1000;
+  if (wifi_connect_due && (int32_t)(now_ms - wifi_connect_due) >= 0) {
+    wifi_connect_due = 0;
+    model.wifi_connected = true;
+    model.time_source = TimeSource::Wifi;
+    model.time_set_at_s = model.uptime_s;
+    if (ui.view() == View::Wifi || ui.view() == View::Settings) ui.refresh();
+  }
   // fake mesh traffic: a packet every 2 s with the SNR from the slider
   if (!sim_silent && (int32_t)(now_ms - next_packet_ms) >= 0) {
-    meter.onPacket(sim_snr, now_ms);
+    float snr = sim_snr + ((int)(now_ms / 2000) % 5 - 2) * 0.5f;   // a little jitter
+    meter.onPacket(snr, now_ms);
+    model.heard_any = true;
+    model.last_snr = snr;
+    model.last_packet_at_s = model.uptime_s;
+    model.repeaters[0].snr = snr;
+    model.repeaters[0].heard_at_s = model.uptime_s;
     next_packet_ms = now_ms + 2000;
+    if (ui.view() == View::Placement) ui.refresh();
   }
   uint8_t level = meter.level(now_ms + silence_offset_ms);
   if (level != model.signal_level) {
@@ -138,6 +168,26 @@ EXPORT(hm_is_large) int hm_is_large() { return model.large_text; }
 EXPORT(hm_has_signal) int hm_has_signal() { return model.signal_level; }
 EXPORT(hm_set_snr) void hm_set_snr(float snr) { sim_snr = snr; }
 EXPORT(hm_is_silent) int hm_is_silent() { return sim_silent; }
+EXPORT(hm_brightness) int hm_brightness() { return model.night ? model.brightness_night : model.brightness_day; }
+
+// Remote command from the favourite: the page writes UTF-8 into this buffer,
+// calls hm_command() and reads the reply back from the same buffer.
+static char cmd_buf[TEXT_LEN];
+EXPORT(hm_cmd_buf) char* hm_cmd_buf() { return cmd_buf; }
+EXPORT(hm_command) void hm_command() {
+  if (!isRemoteCommand(cmd_buf)) {   // plain text: an ordinary message
+    model.convs[0].log.add(SimActions::now(), false, cmd_buf);
+    ui.onFavouriteMessage(now_ms);
+    cmd_buf[0] = 0;
+    return;
+  }
+  CommandResult r;
+  handleRemoteCommand(model, cmd_buf, r);
+  if (r.ring) ui.onRing();
+  else if (r.update) { model.update_running = true; ui.onUpdateStarted(); }
+  else ui.refresh();
+  copyText(cmd_buf, sizeof(cmd_buf), r.reply);
+}
 
 static const char* SAMPLE_FAV[] = {
   "Seid ihr zuhause?", "Strom ist bei uns wieder da. Bei euch auch?",
@@ -179,7 +229,15 @@ EXPORT(hm_action) void hm_action(int id) {
     case 9: ui.onButtonLong(); break;
     case 10: ui.tick(now_ms + 61UL * 60 * 1000); break;  // an hour passes
     case 11: if (model.pin[0]) model.pin[0] = 0; else setSamplePin(); ui.refresh(); break;
-    case 12: if (model.has_appointment) model.has_appointment = false; else setSampleAppointment(); ui.refresh(); break;
+    case 12: if (model.appt_count) model.appt_count = 0; else setSampleAppointment(); ui.refresh(); break;
+    case 13: {  // appointment in 5 minutes -> reminder right away
+      int m = model.minuteOfDay() + 5;
+      char cmd[48];
+      snprintf(cmd, sizeof(cmd), "Anrufen heute %02d:%02d", (m / 60) % 24, m % 60);
+      model.addAppointment(parseAppointment(cmd, model.date, model.hour, model.minute));
+      break;
+    }
+    case 14: ui.onRing(); break;
     default: break;
   }
 }

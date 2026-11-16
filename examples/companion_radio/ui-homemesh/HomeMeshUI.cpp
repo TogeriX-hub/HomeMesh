@@ -23,6 +23,7 @@ namespace homemesh {
 #define HM_SYM_SIGNAL    "\xEF\x80\x92"
 #define HM_SYM_HASH      "\xEF\x8A\x92"
 #define HM_SYM_CHECK2    "\xEF\x95\xA0"
+#define HM_SYM_LOCK      "\xEF\x80\xA3"
 
 static const uint32_t NEWMSG_TIMEOUT_MS = 60UL * 60 * 1000;  // full screen closes after 1 h
 static const uint32_t NIGHT_IDLE_MS = 30UL * 1000;           // night: clock only after 30 s
@@ -67,6 +68,8 @@ static void selectStyle(const Model& m) {
 enum Action : uint16_t {
   A_NONE, A_BACK, A_HOME, A_OPEN_CONV, A_MESSAGES, A_CHANNELS, A_READ, A_REPLY,
   A_RETRY, A_QUICK, A_SEND, A_CHANNEL_TAB, A_COMPOSE_CHANNEL, A_DISMISS_WARNING, A_WAKE,
+  A_EDIT_ALIAS, A_QUIET, A_QUIET_STEP, A_FONT, A_WIFI, A_WIFI_PICK, A_WIFI_FORGET, A_WIFI_SCAN,
+  A_SHARE, A_TECH, A_PLACEMENT, A_UPDATE_START, A_UPDATE_STOP, A_SNOOZE, A_HERE, A_RING_ACK,
 };
 
 static HomeMeshUI* s_ui = nullptr;
@@ -316,10 +319,35 @@ void HomeMeshUI::onButtonShort() { _screen_off = !_screen_off; }
 
 void HomeMeshUI::onButtonLong() {
   _screen_off = false;
-  // settings screen follows in the next step
+  _idle = false;
+  show(View::Settings);
+}
+
+void HomeMeshUI::onRing() {
+  _screen_off = false;
+  _idle = false;
+  _back_n = 0;
+  _view = View::Ring;
+  build();
 }
 
 void HomeMeshUI::tick(uint32_t now_ms) {
+  // appointment reminder 5 minutes before the start (also at night: an
+  // appointment set for the night is meant seriously)
+  if (_view != View::Ring && _view != View::Reminder && _view != View::Update) {
+    int due = _m->takeDueReminder();
+    bool snooze_over = _snooze_until_min >= 0 && _m->nowMinutes() >= _snooze_until_min;
+    if (due >= 0 || (snooze_over && _reminder_appt >= 0)) {
+      if (due >= 0) _reminder_appt = due;
+      _snooze_until_min = -1;
+      _screen_off = false;
+      _idle = false;
+      _back_n = 0;
+      _view = View::Reminder;
+      build();
+      return;
+    }
+  }
   if (_view == View::NewMessages && now_ms - _newmsg_since_ms > NEWMSG_TIMEOUT_MS) {
     show(View::Home);   // unread counter stays on the favourite button
   }
@@ -360,6 +388,15 @@ void HomeMeshUI::buildNow() {
     case View::Compose:     buildCompose(scr); break;
     case View::Messages:    buildMessages(scr); break;
     case View::Channels:    buildChannels(scr); break;
+    case View::Settings:    buildSettings(scr); break;
+    case View::QuietHours:  buildQuietHours(scr); break;
+    case View::Wifi:        buildWifi(scr); break;
+    case View::Technical:   buildTechnical(scr); break;
+    case View::Placement:   buildPlacement(scr); break;
+    case View::Share:       buildShare(scr); break;
+    case View::Update:      buildUpdate(scr); break;
+    case View::Reminder:    buildReminder(scr); break;
+    case View::Ring:        buildRing(scr); break;
   }
   lv_screen_load(scr);
   if (old) lv_obj_delete(old);
@@ -391,7 +428,8 @@ void HomeMeshUI::buildHome(lv_obj_t* scr) {
 
   // The clock takes whatever space the strips leave and shrinks only when it
   // has to: big when the screen is calm, smaller with warnings and notes.
-  int strips = (_m->warning[0] ? 1 : 0) + (_m->pin[0] ? 1 : 0) + (_m->has_appointment ? 1 : 0);
+  int next_appt = _m->nextAppointment();
+  int strips = (_m->warning[0] ? 1 : 0) + (_m->pin[0] ? 1 : 0) + (next_appt >= 0 ? 1 : 0);
   int nfav_tmp[MAX_FAVOURITES];
   int rows = strips + (_m->favourites(nfav_tmp) > 1 ? 1 : 0) + (_m->large_text ? 1 : 0);
   const lv_font_t* clock_font = rows == 0 ? &hm_clock_130 : rows == 1 ? &hm_clock_100 : &hm_clock_80;
@@ -407,10 +445,10 @@ void HomeMeshUI::buildHome(lv_obj_t* scr) {
 
   if (_m->warning[0]) strip(p, LV_SYMBOL_WARNING, _m->warning, T.warn, T.warn_bg, false, A_DISMISS_WARNING);
   if (_m->pin[0]) strip(p, HM_SYM_PIN, _m->pin, T.text, T.surface, false);
-  if (_m->has_appointment) {
+  if (next_appt >= 0) {
     char when[40], text[80];
-    formatWhen(_m->appointment, _m->date.year, when, sizeof(when));
-    snprintf(text, sizeof(text), "%s · %s", _m->appointment.name, when);
+    formatWhen(_m->appts[next_appt], _m->date.year, when, sizeof(when));
+    snprintf(text, sizeof(text), "%s · %s", _m->appts[next_appt].name, when);
     strip(p, HM_SYM_CALENDAR, text, T.accent, T.bg, true);
   }
 
@@ -709,9 +747,23 @@ void HomeMeshUI::buildCompose(lv_obj_t* scr) {
   lv_obj_set_style_pad_all(p, 12, 0);
   lv_obj_set_style_pad_row(p, 8, 0);
 
-  char title[56];
-  if (_compose_channel >= 0) snprintf(title, sizeof(title), "In #%s", _m->channels[_compose_channel].name);
-  else snprintf(title, sizeof(title), "An %s", _m->convs[_chat_conv].displayName());
+  char title[64];
+  const char* placeholder = "Nachricht schreiben";
+  const char* action = "Senden";
+  switch (_compose_mode) {
+    case ComposeMode::Direct: snprintf(title, sizeof(title), "An %s", _m->convs[_chat_conv].displayName()); break;
+    case ComposeMode::Channel: snprintf(title, sizeof(title), "In #%s", _m->channels[_compose_channel].name); break;
+    case ComposeMode::Alias:
+      snprintf(title, sizeof(title), "Name für %s", _m->convs[_chat_conv].name);
+      placeholder = _m->convs[_chat_conv].name;
+      action = "Speichern";
+      break;
+    case ComposeMode::WifiPassword:
+      snprintf(title, sizeof(title), "Passwort für %s", _wifi_ssid);
+      placeholder = "WLAN-Passwort";
+      action = "Verbinden";
+      break;
+  }
   titleBar(p, title);
 
   lv_obj_t* r = row(p, 8);
@@ -719,7 +771,7 @@ void HomeMeshUI::buildCompose(lv_obj_t* scr) {
   grow(_textarea);
   lv_obj_set_height(_textarea, LV_SIZE_CONTENT);
   lv_textarea_set_max_length(_textarea, TEXT_LEN - 1);
-  lv_textarea_set_placeholder_text(_textarea, "Nachricht schreiben");
+  lv_textarea_set_placeholder_text(_textarea, placeholder);
   lv_textarea_set_text(_textarea, _draft);
   lv_obj_set_style_text_font(_textarea, F.body, 0);
   lv_obj_set_style_text_color(_textarea, T.text, 0);
@@ -728,10 +780,10 @@ void HomeMeshUI::buildCompose(lv_obj_t* scr) {
   lv_obj_set_style_radius(_textarea, 10, 0);
   lv_obj_set_style_max_height(_textarea, 3 * lv_font_get_line_height(F.body) + 20, 0);
   lv_obj_add_state(_textarea, LV_STATE_FOCUSED);   // shows the cursor
-  lv_obj_t* send = button(r, "Senden", BTN_PRIMARY, A_SEND);
+  lv_obj_t* send = button(r, action, BTN_PRIMARY, A_SEND);
   lv_obj_set_height(send, 52);
 
-  if (_compose_channel < 0) {
+  if (_compose_mode == ComposeMode::Direct) {
     lv_obj_t* chips = row(p, 8);
     lv_obj_add_flag(chips, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scroll_dir(chips, LV_DIR_HOR);
@@ -751,7 +803,8 @@ void HomeMeshUI::buildCompose(lv_obj_t* scr) {
   lv_keyboard_set_map(kb, LV_KEYBOARD_MODE_TEXT_LOWER, KB_LOWER, KB_CTRL_LETTERS);
   lv_keyboard_set_map(kb, LV_KEYBOARD_MODE_TEXT_UPPER, KB_UPPER, KB_CTRL_LETTERS);
   lv_keyboard_set_map(kb, LV_KEYBOARD_MODE_SPECIAL, KB_SPECIAL, KB_CTRL_SPECIAL);
-  lv_keyboard_set_mode(kb, _draft[0] ? LV_KEYBOARD_MODE_TEXT_LOWER : LV_KEYBOARD_MODE_TEXT_UPPER);
+  bool upper_first = !_draft[0] && _compose_mode != ComposeMode::WifiPassword;
+  lv_keyboard_set_mode(kb, upper_first ? LV_KEYBOARD_MODE_TEXT_UPPER : LV_KEYBOARD_MODE_TEXT_LOWER);
   lv_keyboard_set_textarea(kb, _textarea);
   lv_obj_set_style_text_font(kb, F.body, LV_PART_ITEMS);
   lv_obj_set_style_bg_color(kb, T.bg, 0);
@@ -766,12 +819,394 @@ void HomeMeshUI::buildCompose(lv_obj_t* scr) {
   lv_obj_add_event_cb(kb, onKeyboard, LV_EVENT_READY, nullptr);
 }
 
+// ---------------------------------------------------------------- settings and maintenance
+
+static void fmtAgo(uint32_t seconds, char* out, size_t cap) {
+  if (seconds < 90) snprintf(out, cap, "gerade eben");
+  else if (seconds < 3600) snprintf(out, cap, "vor %u Min.", (unsigned)(seconds / 60));
+  else if (seconds < 86400) snprintf(out, cap, "vor %u Std.", (unsigned)(seconds / 3600));
+  else snprintf(out, cap, "vor %u Tagen", (unsigned)(seconds / 86400));
+}
+
+static void fmtMinutes(int min, char* out, size_t cap) { snprintf(out, cap, "%02d:%02d", min / 60, min % 60); }
+
+static void sectionTitle(lv_obj_t* parent, const char* text) {
+  lv_obj_t* l = label(parent, text, &hm_font_16, T.muted);
+  lv_obj_set_style_pad_top(l, 10, 0);
+}
+
+// "Label ........ value >" row; clickable when an action is given
+static lv_obj_t* settingsRow(lv_obj_t* parent, const char* text, const char* value, lv_color_t value_color,
+                             Action a = A_NONE, int arg = 0) {
+  lv_obj_t* r = row(parent, 10);
+  lv_obj_set_style_pad_ver(r, 12, 0);
+  lv_obj_set_style_border_side(r, LV_BORDER_SIDE_BOTTOM, 0);
+  lv_obj_set_style_border_width(r, 1, 0);
+  lv_obj_set_style_border_color(r, T.line, 0);
+  lv_obj_t* l = label(r, text, F.body, T.text);
+  grow(l);
+  lv_label_set_long_mode(l, LV_LABEL_LONG_MODE_DOTS);
+  if (value) label(r, value, F.small, value_color);
+  if (a != A_NONE) {
+    label(r, LV_SYMBOL_RIGHT, F.small, T.muted);
+    lv_obj_add_flag(r, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(r, HomeMeshUI::onClick, LV_EVENT_CLICKED, packAction(a, arg));
+  }
+  return r;
+}
+
+static void switchRow(lv_obj_t* parent, const char* text, bool on, int which) {
+  lv_obj_t* r = settingsRow(parent, text, nullptr, T.muted);
+  lv_obj_t* sw = lv_switch_create(r);
+  lv_obj_set_size(sw, 64, 34);
+  if (on) lv_obj_add_state(sw, LV_STATE_CHECKED);
+  lv_obj_set_style_bg_color(sw, T.line, 0);
+  lv_obj_set_style_bg_color(sw, T.ok, LV_PART_INDICATOR | LV_STATE_CHECKED);
+  lv_obj_add_event_cb(sw, HomeMeshUI::onSwitch, LV_EVENT_VALUE_CHANGED, (void*)(uintptr_t)which);
+}
+
+static void sliderRow(lv_obj_t* parent, const char* text, int value, int which) {
+  lv_obj_t* col = column(parent, 6);
+  lv_obj_set_style_pad_ver(col, 10, 0);
+  lv_obj_set_style_border_side(col, LV_BORDER_SIDE_BOTTOM, 0);
+  lv_obj_set_style_border_width(col, 1, 0);
+  lv_obj_set_style_border_color(col, T.line, 0);
+  label(col, text, F.body, T.text);
+  lv_obj_t* sl = lv_slider_create(col);
+  lv_obj_set_width(sl, LV_PCT(94));
+  lv_obj_set_style_margin_left(sl, 10, 0);
+  lv_slider_set_range(sl, 5, 100);
+  lv_slider_set_value(sl, value, LV_ANIM_OFF);
+  lv_obj_set_style_bg_color(sl, T.line, 0);
+  lv_obj_set_style_bg_color(sl, T.accent, LV_PART_INDICATOR);
+  lv_obj_set_style_bg_color(sl, T.accent, LV_PART_KNOB);
+  lv_obj_add_event_cb(sl, HomeMeshUI::onSlider, LV_EVENT_VALUE_CHANGED, (void*)(uintptr_t)which);
+  lv_obj_add_event_cb(sl, HomeMeshUI::onSlider, LV_EVENT_RELEASED, (void*)(uintptr_t)(which | 0x100));
+}
+
+void HomeMeshUI::buildSettings(lv_obj_t* scr) {
+  lv_obj_t* p = page(scr);
+  titleBar(p, "Einstellungen", A_HOME);
+  lv_obj_t* list = scrollArea(p, 0);
+
+  sectionTitle(list, "Favoriten (in der MeshCore-App markiert)");
+  int favs[MAX_FAVOURITES];
+  int nf = _m->favourites(favs);
+  if (nf == 0) label(list, "Noch keine Favoriten.", F.small, T.muted);
+  for (int i = 0; i < nf; i++) {
+    const Conversation& cv = _m->convs[favs[i]];
+    char text[48], value[48];
+    snprintf(text, sizeof(text), HM_SYM_STAR "  %s", cv.name);
+    snprintf(value, sizeof(value), "Anzeige: %s", cv.displayName());
+    settingsRow(list, text, value, T.accent, A_EDIT_ALIAS, favs[i]);
+  }
+
+  sectionTitle(list, "Anzeige und Ton");
+  char q[24];
+  if (_m->quiet_enabled) {
+    char a[8], b[8];
+    fmtMinutes(_m->quiet_start_min, a, sizeof(a));
+    fmtMinutes(_m->quiet_end_min, b, sizeof(b));
+    snprintf(q, sizeof(q), "%s – %s", a, b);
+  } else {
+    snprintf(q, sizeof(q), "aus");
+  }
+  settingsRow(list, "Nachtruhe", q, T.accent, A_QUIET);
+  switchRow(list, "Ton bei Favoriten", _m->sound_on, 0);
+  sliderRow(list, "Helligkeit am Tag", _m->brightness_day, 0);
+  sliderRow(list, "Helligkeit in der Nacht", _m->brightness_night, 1);
+  lv_obj_t* fr = settingsRow(list, "Schriftgröße", nullptr, T.muted);
+  lv_obj_t* n = button(fr, "Normal", _m->large_text ? BTN_OUTLINE : BTN_PRIMARY, A_FONT, 0, F.small);
+  lv_obj_set_height(n, 40);
+  lv_obj_t* g = button(fr, "Groß", _m->large_text ? BTN_PRIMARY : BTN_OUTLINE, A_FONT, 1, F.small);
+  lv_obj_set_height(g, 40);
+
+  sectionTitle(list, "Verbindung");
+  char wifi[48];
+  if (!_m->wifi_ssid[0]) snprintf(wifi, sizeof(wifi), "nicht eingerichtet");
+  else snprintf(wifi, sizeof(wifi), "%s%s", _m->wifi_ssid, _m->wifi_connected ? "" : " (getrennt)");
+  settingsRow(list, "WLAN (für die Uhrzeit)", wifi, _m->wifi_connected ? T.ok : T.muted, A_WIFI);
+  char pin[12];
+  snprintf(pin, sizeof(pin), "%06u", (unsigned)_m->ble_pin);
+  settingsRow(list, "App-PIN (Bluetooth)", pin, T.muted);
+  settingsRow(list, "Gerät als Kontakt teilen", "QR-Code", T.muted, A_SHARE);
+
+  sectionTitle(list, "Wartung");
+  settingsRow(list, "Technik", nullptr, T.muted, A_TECH);
+  settingsRow(list, "Aufstellhilfe", nullptr, T.muted, A_PLACEMENT);
+  settingsRow(list, "Update starten", nullptr, T.muted, A_UPDATE_START);
+
+  lv_obj_t* done = button(p, "Fertig", BTN_OUTLINE, A_HOME);
+  lv_obj_set_size(done, LV_PCT(100), 48);
+}
+
+void HomeMeshUI::buildQuietHours(lv_obj_t* scr) {
+  lv_obj_t* p = page(scr);
+  titleBar(p, "Nachtruhe");
+  lv_obj_t* note = label(p, "In der Nachtruhe: dunkles Design, gedimmt, kein Ton. Nachrichten erscheinen leise als Hinweis unter der Uhr.",
+                         F.small, T.muted);
+  lv_obj_set_width(note, LV_PCT(100));
+  lv_label_set_long_mode(note, LV_LABEL_LONG_MODE_WRAP);
+  switchRow(p, "Nachtruhe an", _m->quiet_enabled, 1);
+
+  const char* names[2] = { "Beginn", "Ende" };
+  int values[2] = { _m->quiet_start_min, _m->quiet_end_min };
+  for (int i = 0; i < 2; i++) {
+    lv_obj_t* r = settingsRow(p, names[i], nullptr, T.muted);
+    lv_obj_t* minus = button(r, LV_SYMBOL_MINUS, BTN_OUTLINE, A_QUIET_STEP, i * 2);
+    lv_obj_set_size(minus, 56, 52);
+    char t[8];
+    fmtMinutes(values[i], t, sizeof(t));
+    lv_obj_t* v = label(r, t, F.button, _m->quiet_enabled ? T.text : T.muted);
+    lv_obj_set_width(v, 90);
+    lv_obj_set_style_text_align(v, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_t* plus = button(r, LV_SYMBOL_PLUS, BTN_OUTLINE, A_QUIET_STEP, i * 2 + 1);
+    lv_obj_set_size(plus, 56, 52);
+  }
+  spacer(p);
+  lv_obj_t* hint = label(p, "Schritte von 30 Minuten. Auch per Fernwartung: !nachtruhe 22-7", &hm_font_16, T.muted);
+  lv_obj_set_width(hint, LV_PCT(100));
+  lv_label_set_long_mode(hint, LV_LABEL_LONG_MODE_WRAP);
+}
+
+void HomeMeshUI::buildWifi(lv_obj_t* scr) {
+  lv_obj_t* p = page(scr);
+  titleBar(p, "WLAN");
+  lv_obj_t* note = label(p, "Nur für die Uhrzeit. HomeMesh funktioniert auch ganz ohne WLAN.", F.small, T.muted);
+  lv_obj_set_width(note, LV_PCT(100));
+  lv_label_set_long_mode(note, LV_LABEL_LONG_MODE_WRAP);
+
+  if (_m->wifi_ssid[0]) {
+    settingsRow(p, _m->wifi_ssid, _m->wifi_connected ? "verbunden" : "nicht verbunden",
+                _m->wifi_connected ? T.ok : T.bad);
+  }
+  lv_obj_t* list = scrollArea(p, 0);
+  if (_m->network_count == 0) label(list, "Suche nach Netzen …", F.small, T.muted);
+  for (int i = 0; i < _m->network_count; i++) {
+    const WifiNetwork& n = _m->networks[i];
+    char value[16];
+    snprintf(value, sizeof(value), "%s%d dBm", n.secured ? HM_SYM_LOCK " " : "", n.rssi);
+    settingsRow(list, n.ssid, value, T.muted, A_WIFI_PICK, i);
+  }
+  lv_obj_t* r = row(p, 10);
+  lv_obj_t* scan = button(r, LV_SYMBOL_REFRESH " Neu suchen", BTN_OUTLINE, A_WIFI_SCAN, 0, F.small);
+  lv_obj_set_height(scan, 48);
+  grow(scan);
+  if (_m->wifi_ssid[0]) {
+    lv_obj_t* forget = button(r, "WLAN vergessen", BTN_OUTLINE, A_WIFI_FORGET, 0, F.small);
+    lv_obj_set_height(forget, 48);
+    grow(forget);
+  }
+}
+
+void HomeMeshUI::buildTechnical(lv_obj_t* scr) {
+  lv_obj_t* p = page(scr);
+  titleBar(p, "Technik");
+  lv_obj_t* list = scrollArea(p, 0);
+
+  sectionTitle(list, "Gehörte Repeater");
+  if (_m->repeater_count == 0) label(list, "Noch keine Repeater gehört.", F.small, T.muted);
+  for (int i = 0; i < _m->repeater_count; i++) {
+    const HeardRepeater& r = _m->repeaters[i];
+    char ago[24], value[48];
+    fmtAgo(_m->uptime_s - r.heard_at_s, ago, sizeof(ago));
+    snprintf(value, sizeof(value), "SNR %.1f · %s", r.snr, ago);
+    lv_color_t c = r.snr >= 0 ? T.ok : r.snr >= -5 ? T.muted : T.warn;
+    settingsRow(list, r.name, value, c);
+  }
+
+  sectionTitle(list, "Gerät");
+  static const char* SRC[] = { "keine", "App", "WLAN", "Mesh" };
+  char v[48], ago[24];
+  if (_m->time_source == TimeSource::None) snprintf(v, sizeof(v), "keine");
+  else { fmtAgo(_m->uptime_s - _m->time_set_at_s, ago, sizeof(ago)); snprintf(v, sizeof(v), "%s, %s", SRC[(int)_m->time_source], ago); }
+  settingsRow(list, "Uhrzeit-Quelle", v, T.muted);
+  if (_m->last_advert_at_s) { fmtAgo(_m->uptime_s - _m->last_advert_at_s, ago, sizeof(ago)); snprintf(v, sizeof(v), "0-Hop, %s", ago); }
+  else snprintf(v, sizeof(v), "noch keins");
+  settingsRow(list, "Letztes Advert", v, T.muted);
+  unsigned d = _m->uptime_s / 86400, h = _m->uptime_s % 86400 / 3600, mi = _m->uptime_s % 3600 / 60;
+  snprintf(v, sizeof(v), "%u T %u Std. %u Min.", d, h, mi);
+  settingsRow(list, "Laufzeit", v, T.muted);
+  settingsRow(list, "Gerätename", _m->node_name, T.muted);
+  snprintf(v, sizeof(v), "HomeMesh %s", _m->fw_version);
+  settingsRow(list, "Firmware", v, T.muted);
+}
+
+void HomeMeshUI::buildPlacement(lv_obj_t* scr) {
+  lv_obj_t* p = page(scr);
+  titleBar(p, "Aufstellhilfe");
+  lv_obj_t* note = label(p, "Gerät mit Powerbank langsam an verschiedene Stellen tragen. Der beste Platz ist dort, wo der Balken am längsten ist.",
+                         F.small, T.muted);
+  lv_obj_set_width(note, LV_PCT(100));
+  lv_label_set_long_mode(note, LV_LABEL_LONG_MODE_WRAP);
+
+  lv_obj_t* box_ = column(p, 10);
+  lv_obj_set_height(box_, 1);
+  grow(box_);
+  lv_obj_set_flex_align(box_, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  if (!_m->heard_any) {
+    label(box_, "Noch nichts empfangen …", F.button, T.muted);
+    return;
+  }
+  char snr[24];
+  snprintf(snr, sizeof(snr), "%+.1f dB", _m->last_snr);
+  label(box_, snr, &hm_bold_40, T.text);
+  lv_obj_t* bar = lv_bar_create(box_);
+  lv_obj_set_size(bar, LV_PCT(100), 26);
+  lv_bar_set_range(bar, -15, 12);
+  lv_bar_set_value(bar, (int32_t)_m->last_snr, LV_ANIM_OFF);
+  lv_color_t c = _m->last_snr >= 0 ? T.ok : _m->last_snr >= -5 ? T.warn : T.bad;
+  lv_obj_set_style_bg_color(bar, T.surface, 0);
+  lv_obj_set_style_bg_color(bar, c, LV_PART_INDICATOR);
+  lv_obj_t* scale = row(box_, 0);
+  lv_obj_set_flex_align(scale, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  label(scale, "schlecht", &hm_font_16, T.muted);
+  label(scale, "sehr gut", &hm_font_16, T.muted);
+  char from[64], ago[24];
+  fmtAgo(_m->uptime_s - _m->last_packet_at_s, ago, sizeof(ago));
+  snprintf(from, sizeof(from), "von %s, %s", _m->last_from, ago);
+  label(box_, from, F.small, T.muted);
+}
+
+static lv_obj_t* qr(lv_obj_t* parent, const char* data, int size) {
+  lv_obj_t* frame = box(parent);
+  lv_obj_set_size(frame, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+  lv_obj_set_style_bg_opa(frame, LV_OPA_COVER, 0);
+  lv_obj_set_style_bg_color(frame, lv_color_white(), 0);   // QR codes need a light quiet zone, also at night
+  lv_obj_set_style_pad_all(frame, 10, 0);
+  lv_obj_set_style_radius(frame, 8, 0);
+  lv_obj_t* q = lv_qrcode_create(frame);
+  lv_qrcode_set_size(q, size);
+  lv_qrcode_set_dark_color(q, lv_color_black());
+  lv_qrcode_set_light_color(q, lv_color_white());
+  lv_qrcode_update(q, data, strlen(data));
+  return frame;
+}
+
+void HomeMeshUI::buildShare(lv_obj_t* scr) {
+  lv_obj_t* p = page(scr);
+  titleBar(p, "Gerät teilen");
+  lv_obj_t* c = column(p, 10);
+  lv_obj_set_height(c, 1);
+  grow(c);
+  lv_obj_set_flex_align(c, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  if (!_m->share_uri[0]) {
+    label(c, "Noch nicht verfügbar.", F.body, T.muted);
+    return;
+  }
+  qr(c, _m->share_uri, 230);
+  label(c, _m->node_name, F.button, T.text);
+  lv_obj_t* note = label(c, "Mit der MeshCore-App scannen, um das Gerät als Kontakt hinzuzufügen.", F.small, T.muted);
+  lv_obj_set_width(note, LV_PCT(100));
+  lv_obj_set_style_text_align(note, LV_TEXT_ALIGN_CENTER, 0);
+  lv_label_set_long_mode(note, LV_LABEL_LONG_MODE_WRAP);
+}
+
+void HomeMeshUI::buildUpdate(lv_obj_t* scr) {
+  lv_obj_t* p = page(scr);
+  label(p, LV_SYMBOL_DOWNLOAD "  Update", F.button, T.text);
+  lv_obj_t* note = label(p, "WLAN „MeshCore-OTA“ ist offen. Mit dem Handy:", F.small, T.muted);
+  lv_obj_set_width(note, LV_PCT(100));
+  lv_obj_t* r = row(p, 16);
+  lv_obj_set_flex_align(r, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+  const char* data[2] = { "WIFI:T:nopass;S:MeshCore-OTA;;", "http://192.168.4.1/update" };
+  const char* caps[2] = { "1. WLAN verbinden", "2. Seite öffnen,\n.bin hochladen" };
+  for (int i = 0; i < 2; i++) {
+    lv_obj_t* col = column(r, 6);
+    lv_obj_set_width(col, LV_SIZE_CONTENT);
+    lv_obj_set_flex_align(col, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    qr(col, data[i], 170);
+    lv_obj_t* l = label(col, caps[i], F.small, T.text);
+    lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
+  }
+  spacer(p);
+  label(p, "Bricht der Upload ab, läuft die alte Version weiter.", &hm_font_16, T.muted);
+  lv_obj_t* stop = button(p, "Abbrechen", BTN_OUTLINE, A_UPDATE_STOP);
+  lv_obj_set_size(stop, LV_PCT(100), 50);
+}
+
+void HomeMeshUI::buildReminder(lv_obj_t* scr) {
+  lv_obj_t* p = page(scr);
+  if (_reminder_appt < 0 || _reminder_appt >= _m->appt_count) { _view = View::Home; buildHome(scr); return; }
+  const Appointment& a = _m->appts[_reminder_appt];
+  label(p, LV_SYMBOL_BELL "  Erinnerung", F.body, T.accent);
+  label(p, "Gleich ist", F.body, T.muted);
+  int fav = _m->firstFavourite();
+  char title[80];
+  if (fav >= 0) snprintf(title, sizeof(title), "%s mit %s", a.name, _m->convs[fav].displayName());
+  else snprintf(title, sizeof(title), "%s", a.name);
+  lv_obj_t* t = label(p, title, F.big, T.text);
+  lv_obj_set_width(t, LV_PCT(100));
+  lv_label_set_long_mode(t, LV_LABEL_LONG_MODE_WRAP);
+  char when[8];
+  snprintf(when, sizeof(when), "%02d:%02d", a.hour, a.minute);
+  label(p, when, &hm_clock_80, T.text);
+  spacer(p);
+  lv_obj_t* r = row(p, 10);
+  lv_obj_t* later = button(r, "Später", BTN_OUTLINE, A_SNOOZE);
+  lv_obj_set_size(later, 1, 64);
+  grow(later);
+  lv_obj_t* here = button(r, LV_SYMBOL_OK "  Bin da", BTN_OK, A_HERE);
+  lv_obj_set_size(here, 1, 64);
+  lv_obj_set_flex_grow(here, 2);
+}
+
+static void ringAnim(void* obj, int32_t v) {
+  lv_obj_set_style_border_width((lv_obj_t*)obj, v, 0);
+}
+
+void HomeMeshUI::buildRing(lv_obj_t* scr) {
+  lv_obj_set_style_bg_color(scr, T.bg, 0);
+  lv_obj_t* p = column(scr, 12);
+  lv_obj_set_size(p, LV_PCT(100), LV_PCT(100));
+  lv_obj_set_flex_align(p, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_border_color(p, T.bad, 0);
+  lv_obj_add_flag(p, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(p, onClick, LV_EVENT_CLICKED, packAction(A_RING_ACK, 0));
+  lv_anim_t a;
+  lv_anim_init(&a);
+  lv_anim_set_var(&a, p);
+  lv_anim_set_exec_cb(&a, ringAnim);
+  lv_anim_set_values(&a, 0, 14);
+  lv_anim_set_duration(&a, 400);
+  lv_anim_set_playback_duration(&a, 400);
+  lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
+  lv_anim_start(&a);
+
+  label(p, LV_SYMBOL_BELL, &hm_font_40, T.bad);
+  int fav = _m->firstFavourite();
+  char text[80];
+  snprintf(text, sizeof(text), "%s möchte\neuch erreichen", fav >= 0 ? _m->convs[fav].displayName() : "Jemand");
+  lv_obj_t* l = label(p, text, F.big, T.text);
+  lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
+  label(p, "Bitte auf den Bildschirm tippen", F.body, T.muted);
+}
+
 // ---------------------------------------------------------------- actions
+
+// Marks a conversation read; for favourites the time is reported by "!status".
+static void markRead(Model* m, int conv) {
+  if (m->convs[conv].log.unread && m->convs[conv].favourite && m->time_valid) m->last_read_at = m->nowUnix();
+  m->convs[conv].log.markRead();
+}
 
 void HomeMeshUI::openChat(int conv) {
   _chat_conv = conv;
-  _m->convs[conv].log.markRead();
+  markRead(_m, conv);
   go(View::Chat);
+}
+
+void HomeMeshUI::openCompose(ComposeMode mode, int arg) {
+  _compose_mode = mode;
+  _draft[0] = 0;
+  if (mode == ComposeMode::Direct) _chat_conv = arg;
+  if (mode == ComposeMode::Channel) _compose_channel = arg;
+  if (mode == ComposeMode::Alias) {
+    _chat_conv = arg;
+    copyText(_draft, sizeof(_draft), _m->convs[arg].alias);
+  }
+  if (mode == ComposeMode::WifiPassword) copyText(_wifi_ssid, sizeof(_wifi_ssid), _m->networks[arg].ssid);
+  go(View::Compose);
 }
 
 void HomeMeshUI::openChannel(int ch) {
@@ -786,18 +1221,25 @@ void HomeMeshUI::openChannel(int ch) {
 
 void HomeMeshUI::sendDraft() {
   if (_textarea) copyText(_draft, sizeof(_draft), lv_textarea_get_text(_textarea));
-  if (!_draft[0]) return;
-  if (_compose_channel >= 0) {
-    _act->sendChannel(_compose_channel, _draft);
-    _draft[0] = 0;
-    _view = View::Channels;
-  } else {
-    _act->sendDirect(_chat_conv, _draft);
-    _draft[0] = 0;
-    _view = View::Chat;
+  switch (_compose_mode) {
+    case ComposeMode::Direct:
+      if (!_draft[0]) return;
+      _act->sendDirect(_chat_conv, _draft);
+      break;
+    case ComposeMode::Channel:
+      if (!_draft[0]) return;
+      _act->sendChannel(_compose_channel, _draft);
+      break;
+    case ComposeMode::Alias:   // empty = show the node name again
+      copyText(_m->convs[_chat_conv].alias, sizeof(_m->convs[_chat_conv].alias), _draft);
+      _act->saveSettings();
+      break;
+    case ComposeMode::WifiPassword:
+      _act->wifiConnect(_wifi_ssid, _draft);
+      break;
   }
-  if (_back_n > 0) _back_n--;   // compose is not a place to return to
-  build();
+  _draft[0] = 0;
+  back();   // compose is not a place to return to
 }
 
 void HomeMeshUI::onClick(lv_event_t* e) {
@@ -813,20 +1255,46 @@ void HomeMeshUI::onClick(lv_event_t* e) {
     case A_MESSAGES: ui->go(View::Messages); break;
     case A_CHANNELS: ui->openChannel(ui->_channel); ui->go(View::Channels); break;
     case A_CHANNEL_TAB: ui->openChannel(arg); ui->build(); break;
-    case A_READ: ui->_m->convs[arg].log.markRead(); ui->show(View::Home); break;
+    case A_READ: markRead(ui->_m, arg); ui->show(View::Home); break;
     case A_REPLY:
-      ui->_m->convs[arg].log.markRead();
-      ui->_chat_conv = arg;
-      ui->_compose_channel = -1;
-      ui->_draft[0] = 0;
-      if (ui->_view == View::NewMessages) { ui->_back_n = 0; ui->_view = View::Chat; }
-      ui->go(View::Compose);
+      markRead(ui->_m, arg);
+      // after sending, "back" leads to the conversation
+      if (ui->_view != View::Chat) { ui->_back_n = 0; ui->_view = View::Chat; ui->_chat_conv = arg; }
+      ui->openCompose(ComposeMode::Direct, arg);
       break;
-    case A_COMPOSE_CHANNEL:
-      ui->_compose_channel = arg;
-      ui->_draft[0] = 0;
-      ui->go(View::Compose);
+    case A_COMPOSE_CHANNEL: ui->openCompose(ComposeMode::Channel, arg); break;
+    case A_EDIT_ALIAS: ui->openCompose(ComposeMode::Alias, arg); break;
+    case A_QUIET: ui->go(View::QuietHours); break;
+    case A_QUIET_STEP: {
+      int* v = arg < 2 ? &ui->_m->quiet_start_min : &ui->_m->quiet_end_min;
+      *v = (*v + (arg % 2 ? 30 : -30) + 1440) % 1440;
+      ui->_act->saveSettings();
+      ui->build();
       break;
+    }
+    case A_FONT: ui->_m->large_text = arg != 0; ui->_act->saveSettings(); ui->build(); break;
+    case A_WIFI: ui->_act->wifiScan(); ui->go(View::Wifi); break;
+    case A_WIFI_SCAN: ui->_act->wifiScan(); ui->build(); break;
+    case A_WIFI_PICK: ui->openCompose(ComposeMode::WifiPassword, arg); break;
+    case A_WIFI_FORGET: ui->_act->wifiForget(); ui->build(); break;
+    case A_SHARE: ui->go(View::Share); break;
+    case A_TECH: ui->go(View::Technical); break;
+    case A_PLACEMENT: ui->go(View::Placement); break;
+    case A_UPDATE_START: ui->_act->startUpdate(); ui->go(View::Update); break;
+    case A_UPDATE_STOP: ui->_act->stopUpdate(); ui->show(View::Home); break;
+    case A_SNOOZE:
+      ui->_snooze_until_min = ui->_m->nowMinutes() + APPT_REMIND_BEFORE_MIN;
+      ui->show(View::Home);
+      break;
+    case A_HERE: {
+      int fav = ui->_m->firstFavourite();
+      if (fav >= 0) ui->_act->sendDirect(fav, "Bin da");
+      ui->_reminder_appt = -1;
+      ui->_snooze_until_min = -1;
+      ui->show(View::Home);
+      break;
+    }
+    case A_RING_ACK: ui->_act->ringAcknowledged(); ui->show(View::Home); break;
     case A_QUICK:
       if (ui->_textarea) lv_textarea_set_text(ui->_textarea, QUICK_REPLIES[arg]);
       break;
@@ -848,6 +1316,26 @@ void HomeMeshUI::onBubbleLongPress(lv_event_t* e) {
 void HomeMeshUI::onKeyboard(lv_event_t* e) {
   (void)e;
   s_ui->sendDraft();
+}
+
+void HomeMeshUI::onSwitch(lv_event_t* e) {
+  HomeMeshUI* ui = s_ui;
+  bool on = lv_obj_has_state((lv_obj_t*)lv_event_get_target(e), LV_STATE_CHECKED);
+  int which = (int)(uintptr_t)lv_event_get_user_data(e);
+  if (which == 0) ui->_m->sound_on = on;
+  if (which == 1) { ui->_m->quiet_enabled = on; ui->build(); }
+  ui->_act->saveSettings();
+}
+
+void HomeMeshUI::onSlider(lv_event_t* e) {
+  HomeMeshUI* ui = s_ui;
+  int which = (int)(uintptr_t)lv_event_get_user_data(e);
+  int v = lv_slider_get_value((lv_obj_t*)lv_event_get_target(e));
+  if (which & 0x100) { ui->_act->saveSettings(); return; }   // released
+  if (which == 0) ui->_m->brightness_day = v;
+  else ui->_m->brightness_night = v;
+  bool live = (which == 0) != ui->_m->night;   // preview only the brightness in use now
+  if (live) ui->_act->setBrightness(v);
 }
 
 }  // namespace homemesh

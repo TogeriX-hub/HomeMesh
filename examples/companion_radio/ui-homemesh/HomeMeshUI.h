@@ -20,6 +20,14 @@ public:
   virtual void sendDirect(int conv, const char* text) = 0;
   virtual void sendChannel(int channel, const char* text) = 0;
   virtual void retryDirect(int conv, int msg_index) = 0;
+  virtual void saveSettings() {}                       // settings or aliases changed
+  virtual void wifiConnect(const char* ssid, const char* password) { (void)ssid; (void)password; }
+  virtual void wifiForget() {}
+  virtual void wifiScan() {}
+  virtual void startUpdate() {}                        // open the OTA hotspot
+  virtual void stopUpdate() {}
+  virtual void ringAcknowledged() {}                   // someone tapped the ringing screen
+  virtual void setBrightness(uint8_t percent) { (void)percent; }
 };
 
 enum class View : uint8_t {
@@ -29,7 +37,18 @@ enum class View : uint8_t {
   Compose,
   Messages,      // list of all direct conversations
   Channels,
+  Settings,      // long press on the hardware button
+  QuietHours,
+  Wifi,
+  Technical,
+  Placement,     // live signal while carrying the device around
+  Share,         // QR code of the device's contact
+  Update,        // Wi-Fi update hotspot with QR codes
+  Reminder,      // appointment starts in 5 minutes
+  Ring,          // remote "!klingeln"
 };
+
+enum class ComposeMode : uint8_t { Direct, Channel, Alias, WifiPassword };
 
 class HomeMeshUI {
 public:
@@ -43,6 +62,13 @@ public:
 
   // A direct message from a favourite arrived (already added to the model).
   void onFavouriteMessage(uint32_t now_ms);
+
+  // Remote "!klingeln": full screen until someone taps it.
+  void onRing();
+  bool ringing() const { return _view == View::Ring; }
+
+  // The OTA hotspot was opened (from settings or by "!update").
+  void onUpdateStarted() { show(View::Update); }
 
   // Hardware button
   void onButtonShort();
@@ -63,7 +89,11 @@ private:
   int _back_n = 0;
 
   int _chat_conv = 0;          // conversation shown in Chat/Compose
-  int _compose_channel = -1;   // >=0: composing into a channel
+  ComposeMode _compose_mode = ComposeMode::Direct;
+  int _compose_channel = 0;    // channel for ComposeMode::Channel
+  char _wifi_ssid[33] = {0};   // network for ComposeMode::WifiPassword
+  int _reminder_appt = -1;
+  int64_t _snooze_until_min = -1;
   int _channel = 0;            // channel shown in Channels
   int _channel_divider = -1;   // index where "new since last visit" starts
   char _draft[TEXT_LEN] = {0};
@@ -89,8 +119,18 @@ private:
   void buildCompose(lv_obj_t* scr);
   void buildMessages(lv_obj_t* scr);
   void buildChannels(lv_obj_t* scr);
+  void buildSettings(lv_obj_t* scr);
+  void buildQuietHours(lv_obj_t* scr);
+  void buildWifi(lv_obj_t* scr);
+  void buildTechnical(lv_obj_t* scr);
+  void buildPlacement(lv_obj_t* scr);
+  void buildShare(lv_obj_t* scr);
+  void buildUpdate(lv_obj_t* scr);
+  void buildReminder(lv_obj_t* scr);
+  void buildRing(lv_obj_t* scr);
 
   void openChat(int conv);
+  void openCompose(ComposeMode mode, int arg);
   void openChannel(int ch);
   void sendDraft();
 
@@ -99,6 +139,8 @@ public:
   static void onClick(lv_event_t* e);
   static void onBubbleLongPress(lv_event_t* e);
   static void onKeyboard(lv_event_t* e);
+  static void onSwitch(lv_event_t* e);
+  static void onSlider(lv_event_t* e);
 };
 
 }  // namespace homemesh

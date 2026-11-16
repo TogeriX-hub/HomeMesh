@@ -175,6 +175,29 @@ int main(int argc, char** argv) {
   shot(out, "09_home_large_text");
   model.large_text = false;
 
+  ui.onButtonLong();
+  shot(out, "13_settings");
+  ui.show(View::QuietHours);
+  shot(out, "14_quiet_hours");
+  sampleNetworks();
+  ui.show(View::Wifi);
+  shot(out, "15_wifi");
+  ui.show(View::Technical);
+  shot(out, "16_technical");
+  ui.show(View::Placement);
+  shot(out, "17_placement");
+  ui.show(View::Share);
+  shot(out, "18_share");
+  ui.show(View::Update);
+  shot(out, "19_update");
+  ui.show(View::Home);
+  model.addAppointment(parseAppointment("Anrufen heute 18:45", model.date, model.hour, model.minute));
+  ui.tick(fake_ms);
+  shot(out, "20_reminder");
+  ui.show(View::Home);
+  ui.onRing();
+  shot(out, "21_ring");
+
   model.night = true;
   ui.show(View::Home);
   shot(out, "10_home_night");

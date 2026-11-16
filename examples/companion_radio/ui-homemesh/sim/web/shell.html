@@ -56,6 +56,8 @@
     <button data-a="10">1 Stunde vergeht</button>
     <button data-a="11">Merkzettel an/aus (!pin)</button>
     <button data-a="12">Termin an/aus (!termin)</button>
+    <button data-a="13">Termin in 5 Min. (Erinnerung)</button>
+    <button data-a="14">!klingeln</button>
   </section>
   <section>
     <h2>Zustand</h2>
@@ -70,8 +72,26 @@
     <p class="small">Der Simulator „empfängt“ alle 2 Sekunden ein Paket mit diesem SNR; die Balken folgen einem gleitenden Mittelwert (ab +5 dB 4 Balken, ab 0 dB 3, ab −5 dB 2, darunter 1). Bei Funkstille endet eine gesendete Nachricht mit „nicht zugestellt“. Nachts zeigt das Gerät nach 30 Sekunden ohne Berühren nur die Uhr.</p>
   </section>
   <section>
+    <h2>Fernwartung (du schreibst als Max)</h2>
+    <form id="cmdform" style="display:flex;gap:6px">
+      <input id="cmd" type="text" value="!status" style="flex:1;font:inherit;font-size:13px;padding:7px 8px;border:1px solid #9ca3af;border-radius:8px">
+      <button type="submit" style="margin:0">Senden</button>
+    </form>
+    <div style="margin-top:6px">
+      <button data-cmd="!status">!status</button>
+      <button data-cmd="!pin Sonntag 12 Uhr Essen">!pin</button>
+      <button data-cmd="!unpin">!unpin</button>
+      <button data-cmd="!termin Anrufen morgen 19:00">!termin</button>
+      <button data-cmd="!termine">!termine</button>
+      <button data-cmd="!nachtruhe 22-7">!nachtruhe</button>
+      <button data-cmd="!klingeln">!klingeln</button>
+      <button data-cmd="!update">!update</button>
+    </div>
+    <div id="reply" style="font-family:ui-monospace,Menlo,monospace;font-size:12px;white-space:pre-wrap;margin-top:6px;color:#111827">Text ohne ! kommt als normale Nachricht an.</div>
+  </section>
+  <section>
     <h2>Noch nicht drin</h2>
-    <p class="small">Einstellungen (lange Taste), Technik-Seite, Aufstellhilfe, Termin-Erinnerung, Klingeln, QR-Codes, Ton.</p>
+    <p class="small">Ton (Buzzer am RP2040), Dimmen nach 10 Minuten, echte Funk-Anbindung.</p>
   </section>
 </div>
 
@@ -121,7 +141,8 @@ const WASM_BASE64 = "__WASM_BASE64__";
       ctx.putImageData(img, 0, 0);
     }
     canvas.classList.toggle('off', !!e.hm_screen_off());
-    canvas.classList.toggle('dim', !e.hm_screen_off() && !!e.hm_is_night());
+    canvas.classList.remove('dim');
+    canvas.style.filter = e.hm_screen_off() ? 'brightness(0)' : 'brightness(' + (0.35 + 0.65 * e.hm_brightness() / 100).toFixed(2) + ')';
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
@@ -155,6 +176,25 @@ const WASM_BASE64 = "__WASM_BASE64__";
     syncPanel();
   }));
   syncPanel();
+
+  // remote commands: write UTF-8 into the module's buffer, run, read the reply
+  const enc = new TextEncoder(), dec = new TextDecoder();
+  function sendCommand(text) {
+    const ptr = e.hm_cmd_buf();
+    const bytes = enc.encode(text).slice(0, 160);
+    const view = new Uint8Array(mem.buffer, ptr, 161);
+    view.fill(0); view.set(bytes);
+    e.hm_command();
+    const out = new Uint8Array(mem.buffer, ptr, 161);
+    const reply = dec.decode(out.slice(0, out.indexOf(0)));
+    document.getElementById('reply').textContent = reply ? '> ' + text + '\n' + reply : '> ' + text + '\n(als Nachricht gesendet)';
+    syncPanel();
+  }
+  document.getElementById('cmdform').addEventListener('submit', ev => { ev.preventDefault(); sendCommand(document.getElementById('cmd').value); });
+  document.querySelectorAll('[data-cmd]').forEach(b => b.addEventListener('click', () => {
+    document.getElementById('cmd').value = b.dataset.cmd;
+    sendCommand(b.dataset.cmd);
+  }));
 
   const snr = document.getElementById('snr'), snrval = document.getElementById('snrval');
   snr.addEventListener('input', () => {
