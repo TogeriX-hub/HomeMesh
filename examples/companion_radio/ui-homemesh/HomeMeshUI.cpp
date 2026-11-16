@@ -9,7 +9,9 @@ LV_FONT_DECLARE(hm_font_30)
 LV_FONT_DECLARE(hm_font_40)
 LV_FONT_DECLARE(hm_bold_30)
 LV_FONT_DECLARE(hm_bold_40)
+LV_FONT_DECLARE(hm_clock_80)
 LV_FONT_DECLARE(hm_clock_100)
+LV_FONT_DECLARE(hm_clock_130)
 
 namespace homemesh {
 
@@ -372,13 +374,21 @@ void HomeMeshUI::buildHome(lv_obj_t* scr) {
   label(top, HM_SYM_SIGNAL, F.small, _m->signal_ok ? T.ok : T.bad);
   label(top, _m->signal_ok ? "Funknetz ok" : "Kein Funkempfang", F.small, T.muted);
 
-  // clock
+  // The clock takes whatever space the strips leave and shrinks only when it
+  // has to: big when the screen is calm, smaller with warnings and notes.
+  int strips = (_m->warning[0] ? 1 : 0) + (_m->pin[0] ? 1 : 0) + (_m->has_appointment ? 1 : 0);
+  int nfav_tmp[MAX_FAVOURITES];
+  int rows = strips + (_m->favourites(nfav_tmp) > 1 ? 1 : 0) + (_m->large_text ? 1 : 0);
+  const lv_font_t* clock_font = rows == 0 ? &hm_clock_130 : rows == 1 ? &hm_clock_100 : &hm_clock_80;
+
+  lv_obj_t* clock_area = column(p, 0);
+  lv_obj_set_height(clock_area, 1);
+  grow(clock_area);
+  lv_obj_set_flex_align(clock_area, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   char clock[8];
   if (_m->time_valid) snprintf(clock, sizeof(clock), "%02d:%02d", _m->hour, _m->minute);
   else snprintf(clock, sizeof(clock), "--:--");
-  lv_obj_t* c = label(p, clock, &hm_clock_100, T.text);
-  lv_obj_set_width(c, LV_PCT(100));
-  lv_obj_set_style_text_align(c, LV_TEXT_ALIGN_CENTER, 0);
+  label(clock_area, clock, clock_font, T.text);
 
   if (_m->warning[0]) strip(p, LV_SYMBOL_WARNING, _m->warning, T.warn, T.warn_bg, false, A_DISMISS_WARNING);
   if (_m->pin[0]) strip(p, HM_SYM_PIN, _m->pin, T.text, T.surface, false);
@@ -388,8 +398,6 @@ void HomeMeshUI::buildHome(lv_obj_t* scr) {
     snprintf(text, sizeof(text), "%s · %s", _m->appointment.name, when);
     strip(p, HM_SYM_CALENDAR, text, T.accent, T.bg, true);
   }
-
-  spacer(p);
 
   // favourites: one big button each
   int favs[MAX_FAVOURITES];
@@ -440,7 +448,7 @@ void HomeMeshUI::buildNightClock(lv_obj_t* scr) {
   char clock[8];
   if (_m->time_valid) snprintf(clock, sizeof(clock), "%02d:%02d", _m->hour, _m->minute);
   else snprintf(clock, sizeof(clock), "--:--");
-  label(p, clock, &hm_clock_100, T.muted);
+  label(p, clock, &hm_clock_130, T.muted);
 
   int favs[MAX_FAVOURITES];
   int nf = _m->favourites(favs);

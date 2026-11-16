@@ -127,7 +127,14 @@ int main(int argc, char** argv) {
 
   sampleData();
   ui.begin(&model, &actions);
-  shot(out, "01_home");
+  shot(out, "01_home_calm");
+  setSampleWarning();
+  ui.refresh();
+  shot(out, "01b_home_warning");
+  setSamplePin();
+  setSampleAppointment();
+  ui.refresh();
+  shot(out, "01c_home_full");
 
   // a new message from the favourite
   model.convs[0].log.add(SimActions::now(), false, "Strom ist bei uns wieder da. Bei euch auch?");

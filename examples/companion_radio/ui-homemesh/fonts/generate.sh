@@ -25,6 +25,8 @@ for size in 30 40; do
   lv_font_conv --bpp 4 --size $size --format lvgl --force-fast-kern-format \
     --font "$BOLD" -r $TEXT --lv-font-name hm_bold_$size -o hm_bold_$size.c
 done
-# clock digits only
-lv_font_conv --bpp 4 --size 100 --format lvgl --font "$BOLD" -r 0x30-0x3A \
-  --lv-font-name hm_clock_100 -o hm_clock_100.c
+# clock digits only, three sizes: the home screen picks one by how much else it shows
+for size in 80 100 130; do
+  lv_font_conv --bpp 4 --size $size --format lvgl --font "$BOLD" -r 0x30-0x3A \
+    --lv-font-name hm_clock_$size -o hm_clock_$size.c
+done

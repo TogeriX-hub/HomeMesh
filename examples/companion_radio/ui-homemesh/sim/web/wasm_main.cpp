@@ -82,7 +82,6 @@ EXPORT(hm_init) void hm_init(int hour, int minute, int year, int month, int day)
   model.date = CivilDate{ year, month, day };
   model.hour = hour;
   model.minute = minute;
-  model.appointment = parseAppointment("Funkrunde täglich 19:00", model.date, hour, minute);
   ui.begin(&model, &actions);
 }
 
@@ -148,7 +147,7 @@ EXPORT(hm_action) void hm_action(int id) {
     case 4: {  // real WarnBridge alert
       const char* raw = "[!] DWD | Sturmböen | Landkreis | /details";
       model.channels[1].log.add(t, false, raw, "WarnBridge");
-      copyText(model.warning, sizeof(model.warning), "DWD · Sturmböen · Landkreis");
+      setSampleWarning();
       ui.refresh();
       break;
     }
@@ -158,7 +157,8 @@ EXPORT(hm_action) void hm_action(int id) {
     case 8: ui.onButtonShort(); break;
     case 9: ui.onButtonLong(); break;
     case 10: ui.tick(now_ms + 61UL * 60 * 1000); break;  // an hour passes
-    case 11: model.pin[0] = 0; ui.refresh(); break;
+    case 11: if (model.pin[0]) model.pin[0] = 0; else setSamplePin(); ui.refresh(); break;
+    case 12: if (model.has_appointment) model.has_appointment = false; else setSampleAppointment(); ui.refresh(); break;
     default: break;
   }
 }

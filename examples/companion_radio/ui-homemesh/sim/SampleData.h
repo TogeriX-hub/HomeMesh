@@ -66,10 +66,14 @@ inline void sampleData() {
   strcpy(c2.name, "warnings");
   c2.log.add(at(0, 16, 2), false, "DAB+:OK/18dB NINA:OK 5m Mesh:OK Up:3d Warn:1", "WarnBridge");
 
-  strcpy(model.warning, "DWD · Sturmböen · Landkreis");
-  strcpy(model.pin, "Sonntag 12 Uhr Essen");
+  // warning, pinned note and appointment start empty; they appear on events
+}
+
+inline void setSampleWarning() { strcpy(model.warning, "DWD · Sturmböen · Landkreis"); }
+inline void setSamplePin() { strcpy(model.pin, "Sonntag 12 Uhr Essen"); }
+inline void setSampleAppointment() {
   model.has_appointment = true;
-  model.appointment = parseAppointment("Funkrunde täglich 19:00", model.date, 18, 42);
+  model.appointment = parseAppointment("Funkrunde täglich 19:00", model.date, model.hour, model.minute);
 }
 
 }  // namespace homemesh
