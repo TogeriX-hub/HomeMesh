@@ -162,6 +162,14 @@ int main(int argc, char** argv) {
   click("Kanäle");
   shot(out, "08_channels");
 
+  model.signal_level = 2;
+  ui.show(View::Home);
+  shot(out, "08b_home_signal_ok");
+  model.signal_level = 0;
+  ui.show(View::Home);
+  shot(out, "08c_home_no_signal");
+  model.signal_level = 4;
+
   model.large_text = true;
   ui.show(View::Home);
   shot(out, "09_home_large_text");

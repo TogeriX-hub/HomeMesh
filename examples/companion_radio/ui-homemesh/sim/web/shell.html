@@ -61,8 +61,13 @@
     <h2>Zustand</h2>
     <button id="night" data-a="5">Nacht (Nachtruhe)</button>
     <button id="large" data-a="6">Schrift groß</button>
-    <button id="signal" data-a="7">Funkempfang weg</button>
-    <p class="small">Ohne Funkempfang endet eine gesendete Nachricht mit „nicht zugestellt“. Nachts zeigt das Gerät nach 30 Sekunden ohne Berühren nur die Uhr.</p>
+    <button id="signal" data-a="7">Funkstille (3 Std. nichts gehört)</button>
+    <div style="display:flex;align-items:center;gap:10px;font-size:13px;margin-top:4px">
+      <label for="snr">SNR</label>
+      <input id="snr" type="range" min="-15" max="12" step="0.5" value="6" style="flex:1">
+      <span id="snrval" style="min-width:56px;text-align:right">+6.0 dB</span>
+    </div>
+    <p class="small">Der Simulator „empfängt“ alle 2 Sekunden ein Paket mit diesem SNR; die Balken folgen einem gleitenden Mittelwert (ab +5 dB 4 Balken, ab 0 dB 3, ab −5 dB 2, darunter 1). Bei Funkstille endet eine gesendete Nachricht mit „nicht zugestellt“. Nachts zeigt das Gerät nach 30 Sekunden ohne Berühren nur die Uhr.</p>
   </section>
   <section>
     <h2>Noch nicht drin</h2>
@@ -143,13 +148,20 @@ const WASM_BASE64 = "__WASM_BASE64__";
   function syncPanel() {
     document.getElementById('night').classList.toggle('on', !!e.hm_is_night());
     document.getElementById('large').classList.toggle('on', !!e.hm_is_large());
-    document.getElementById('signal').classList.toggle('on', !e.hm_has_signal());
+    document.getElementById('signal').classList.toggle('on', !!e.hm_is_silent());
   }
   document.querySelectorAll('[data-a]').forEach(b => b.addEventListener('click', () => {
     e.hm_action(Number(b.dataset.a));
     syncPanel();
   }));
   syncPanel();
+
+  const snr = document.getElementById('snr'), snrval = document.getElementById('snrval');
+  snr.addEventListener('input', () => {
+    const v = Number(snr.value);
+    e.hm_set_snr(v);
+    snrval.textContent = (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v).toFixed(1) + ' dB';
+  });
 })();
 </script>
 </body>

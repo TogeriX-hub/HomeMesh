@@ -16,11 +16,16 @@ static const int W = 480, H = 480;
 static uint32_t rgba[W * H];          // what the page copies onto the canvas
 static uint16_t draw_buf[W * 48];
 static uint32_t now_ms = 0;
+static uint32_t silence_offset_ms = 0;   // "3 hours of silence" without waiting
 static int ptr_x = 0, ptr_y = 0;
 static bool ptr_down = false;
 static bool dirty = true;
 
 static HomeMeshUI ui;
+static SignalMeter meter;
+static float sim_snr = 6.0f;
+static bool sim_silent = false;
+static uint32_t next_packet_ms = 0;
 
 // Outgoing direct messages switch from "on the way" to delivered (or failed
 // without radio) after a short delay, like a real ACK.
@@ -90,12 +95,22 @@ EXPORT(hm_frame) void hm_frame(uint32_t ms) {
   for (int i = 0; i < ack_count;) {
     if ((int32_t)(now_ms - acks[i].due) >= 0) {
       Message& m = model.convs[acks[i].conv].log.msgs[acks[i].msg];
-      m.status = model.signal_ok ? Delivery::Delivered : Delivery::Failed;
+      m.status = model.signal_level ? Delivery::Delivered : Delivery::Failed;
       acks[i] = acks[--ack_count];
       if (ui.view() == View::Chat) ui.refresh();
     } else {
       i++;
     }
+  }
+  // fake mesh traffic: a packet every 2 s with the SNR from the slider
+  if (!sim_silent && (int32_t)(now_ms - next_packet_ms) >= 0) {
+    meter.onPacket(sim_snr, now_ms);
+    next_packet_ms = now_ms + 2000;
+  }
+  uint8_t level = meter.level(now_ms + silence_offset_ms);
+  if (level != model.signal_level) {
+    model.signal_level = level;
+    if (ui.view() == View::Home) ui.refresh();
   }
   ui.tick(now_ms);
   lv_timer_handler();
@@ -120,7 +135,9 @@ EXPORT(hm_take_dirty) int hm_take_dirty() { bool d = dirty; dirty = false; retur
 EXPORT(hm_screen_off) int hm_screen_off() { return ui.screenOff(); }
 EXPORT(hm_is_night) int hm_is_night() { return model.night; }
 EXPORT(hm_is_large) int hm_is_large() { return model.large_text; }
-EXPORT(hm_has_signal) int hm_has_signal() { return model.signal_ok; }
+EXPORT(hm_has_signal) int hm_has_signal() { return model.signal_level; }
+EXPORT(hm_set_snr) void hm_set_snr(float snr) { sim_snr = snr; }
+EXPORT(hm_is_silent) int hm_is_silent() { return sim_silent; }
 
 static const char* SAMPLE_FAV[] = {
   "Seid ihr zuhause?", "Strom ist bei uns wieder da. Bei euch auch?",
@@ -153,7 +170,11 @@ EXPORT(hm_action) void hm_action(int id) {
     }
     case 5: model.night = !model.night; ui.onTouch(now_ms); ui.refresh(); break;
     case 6: model.large_text = !model.large_text; ui.refresh(); break;
-    case 7: model.signal_ok = !model.signal_ok; ui.refresh(); break;
+    case 7:   // radio silence: no packets, and 3 h pass at once
+      sim_silent = !sim_silent;
+      silence_offset_ms = sim_silent ? SignalMeter::SILENCE_MS + 1000 : 0;
+      if (!sim_silent) next_packet_ms = now_ms;
+      break;
     case 8: ui.onButtonShort(); break;
     case 9: ui.onButtonLong(); break;
     case 10: ui.tick(now_ms + 61UL * 60 * 1000); break;  // an hour passes

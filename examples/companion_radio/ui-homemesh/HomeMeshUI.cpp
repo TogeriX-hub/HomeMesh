@@ -225,6 +225,21 @@ static lv_obj_t* scrollArea(lv_obj_t* parent, int gap) {
 static lv_obj_t* s_scroll_to_end = nullptr;
 static void scrollToEnd(lv_obj_t* list) { s_scroll_to_end = list; }
 
+// Four bars like on a phone; filled bars take the colour of the level.
+static void signalBars(lv_obj_t* parent, uint8_t level) {
+  lv_obj_t* bars = row(parent, 2);
+  lv_obj_set_size(bars, LV_SIZE_CONTENT, 16);
+  lv_obj_set_flex_align(bars, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
+  lv_color_t on = level >= 3 ? T.ok : level == 2 ? T.warn : T.bad;
+  for (int i = 0; i < 4; i++) {
+    lv_obj_t* b = box(bars);
+    lv_obj_set_size(b, 4, 4 + i * 4);
+    lv_obj_set_style_radius(b, 1, 0);
+    lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(b, i < level ? on : T.line, 0);
+  }
+}
+
 // Full-width row that puts a chat bubble on the left (incoming) or right (outgoing)
 static lv_obj_t* bubbleHolder(lv_obj_t* list, bool outgoing) {
   lv_obj_t* h = row(list, 0);
@@ -371,8 +386,8 @@ void HomeMeshUI::buildHome(lv_obj_t* scr) {
     snprintf(date, sizeof(date), "Uhrzeit unbekannt");
   }
   grow(label(top, date, F.small, T.muted));
-  label(top, HM_SYM_SIGNAL, F.small, _m->signal_ok ? T.ok : T.bad);
-  label(top, _m->signal_ok ? "Funknetz ok" : "Kein Funkempfang", F.small, T.muted);
+  signalBars(top, _m->signal_level);
+  label(top, signalText(_m->signal_level), F.small, _m->signal_level ? T.muted : T.bad);
 
   // The clock takes whatever space the strips leave and shrinks only when it
   // has to: big when the screen is calm, smaller with warnings and notes.

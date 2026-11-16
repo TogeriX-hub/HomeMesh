@@ -10,6 +10,7 @@
 #include <string.h>
 #include <helpers/UTF8Helpers.h>
 #include "Appointment.h"
+#include "SignalMeter.h"
 
 namespace homemesh {
 
@@ -88,7 +89,7 @@ struct Model {
   int hour, minute;
 
   // status
-  bool signal_ok;
+  uint8_t signal_level;  // 0 = no signal .. 4 = good, from SignalMeter
   bool night;           // quiet hours active
   bool large_text;
 

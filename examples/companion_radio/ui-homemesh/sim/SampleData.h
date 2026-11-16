@@ -38,7 +38,7 @@ inline void sampleData() {
   model.time_valid = true;
   model.date = CivilDate{ 2026, 11, 16 };
   model.hour = 18; model.minute = 42;
-  model.signal_ok = true;
+  model.signal_level = 4;
 
   Conversation& fav = model.convs[model.conv_count++];
   strcpy(fav.name, "Juno48 Tracker");
