@@ -328,6 +328,8 @@ void HomeMeshUI::buildAsync(void* self) {
 }
 
 void HomeMeshUI::buildNow() {
+  // keep typed text when the compose screen is redrawn (e.g. a message arrives)
+  if (_view == View::Compose && _textarea) copyText(_draft, sizeof(_draft), lv_textarea_get_text(_textarea));
   selectStyle(*_m);
   _textarea = nullptr;
   lv_obj_t* old = lv_screen_active();
