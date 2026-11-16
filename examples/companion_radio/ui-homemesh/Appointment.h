@@ -54,7 +54,11 @@ struct Appointment {
   char name[APPT_NAME_MAX];
   int weekday_given;    // 0=Mo..6=So, -1 if none (for error messages)
   int weekday_actual;   // weekday of the resolved date
+  int64_t reminded_start;   // start (minutes since 1970) of the occurrence already reminded
 };
+
+static const int APPT_REMIND_BEFORE_MIN = 5;
+static const int APPT_SHOW_AFTER_MIN = 30;
 
 // ---- date arithmetic (proleptic Gregorian, days since 1970-01-01) ----
 
@@ -350,6 +354,16 @@ inline Appointment parseAppointment(const char* args, const CivilDate& today, in
   a.date = civilFromDays(target);
   a.weekday_actual = weekdayOf(a.date);
   return a;
+}
+
+// Start of the relevant occurrence in minutes since 1970: for daily
+// appointments today's, or tomorrow's once today's is more than 30 minutes past.
+inline int64_t appointmentStart(const Appointment& a, int64_t now_minutes) {
+  if (!a.daily) return daysFromCivil(a.date.year, a.date.month, a.date.day) * 1440 + a.hour * 60 + a.minute;
+  int64_t day = now_minutes / 1440;
+  int64_t st = day * 1440 + a.hour * 60 + a.minute;
+  if (now_minutes > st + APPT_SHOW_AFTER_MIN) st += 1440;
+  return st;
 }
 
 // "Di 17.11. 19:00", "Di 05.01.2027 10:00" (year only if not the current one), "täglich 19:00"

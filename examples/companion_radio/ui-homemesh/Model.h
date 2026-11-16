@@ -18,6 +18,9 @@ static const int MAX_CONVERSATIONS = 6;
 static const int MAX_CHANNELS = 6;
 static const int MAX_LOG_MESSAGES = 30;
 static const int MAX_FAVOURITES = 3;
+static const int MAX_APPOINTMENTS = 4;
+static const int MAX_REPEATERS = 6;
+static const int MAX_WIFI_NETWORKS = 8;
 static const int TEXT_LEN = 161;      // MeshCore text payload + terminator
 static const int NAME_LEN = 32;
 
@@ -82,27 +85,72 @@ struct Channel {
   MessageLog log;
 };
 
+struct HeardRepeater {
+  char name[NAME_LEN];
+  float snr;
+  uint32_t heard_at_s;   // uptime seconds of the last packet
+};
+
+struct WifiNetwork {
+  char ssid[33];
+  int8_t rssi;
+  bool secured;
+};
+
+enum class TimeSource : uint8_t { None, App, Wifi, Mesh };
+
 struct Model {
   // clock
   bool time_valid;
   CivilDate date;
   int hour, minute;
+  TimeSource time_source;
+  uint32_t time_set_at_s;   // uptime seconds when the clock was last set
 
   // status
   uint8_t signal_level;  // 0 = no signal .. 4 = good, from SignalMeter
-  bool night;           // quiet hours active
+  bool night;           // quiet hours active (computed from the settings below)
   bool large_text;
+
+  // settings (changed on the device or by remote command, saved by the firmware)
+  bool quiet_enabled;
+  int quiet_start_min, quiet_end_min;   // minutes of the day, e.g. 22:00 = 1320
+  bool sound_on;                        // sound for messages from favourites
+  uint8_t brightness_day, brightness_night;   // percent
+  uint8_t advert_interval_h;            // zero-hop advert interval, 0 = off
 
   // home screen extras
   char warning[TEXT_LEN];   // empty = none
   char pin[TEXT_LEN];       // empty = none
-  bool has_appointment;
-  Appointment appointment;
+  Appointment appts[MAX_APPOINTMENTS];
+  int appt_count;
 
   Conversation convs[MAX_CONVERSATIONS];
   int conv_count;
   Channel channels[MAX_CHANNELS];
   int channel_count;
+
+  // technical page
+  HeardRepeater repeaters[MAX_REPEATERS];
+  int repeater_count;
+  bool heard_any;
+  float last_snr;                // last received packet, for the placement helper
+  char last_from[NAME_LEN];
+  uint32_t last_packet_at_s;
+  uint32_t uptime_s;
+  uint32_t last_advert_at_s;
+  char fw_version[16];
+  char node_name[NAME_LEN];
+  uint32_t ble_pin;
+  char share_uri[200];           // contact link for the QR code (filled by the firmware)
+
+  // Wi-Fi
+  char wifi_ssid[33];            // empty = not configured
+  bool wifi_connected;
+  WifiNetwork networks[MAX_WIFI_NETWORKS];
+  int network_count;
+  bool update_running;           // OTA hotspot open
+  uint32_t last_read_at;         // unix time a favourite's messages were last read on the device
 
   void clear() { memset(this, 0, sizeof(*this)); }
 
@@ -115,12 +163,80 @@ struct Model {
     return n;
   }
 
+  int firstFavourite() const {
+    for (int i = 0; i < conv_count; i++) if (convs[i].favourite) return i;
+    return -1;
+  }
+
   int unreadFrom(bool favourite) const {
     int sum = 0;
     for (int i = 0; i < conv_count; i++) {
       if (convs[i].favourite == favourite) sum += convs[i].log.unread;
     }
     return sum;
+  }
+
+  int minuteOfDay() const { return hour * 60 + minute; }
+  uint32_t nowUnix() const { return (uint32_t)(nowMinutes() * 60); }
+  int64_t nowMinutes() const { return daysFromCivil(date.year, date.month, date.day) * 1440 + minuteOfDay(); }
+
+  // Quiet hours may span midnight (22:00-07:00).
+  bool inQuietHours() const {
+    if (!quiet_enabled || !time_valid) return false;
+    int m = minuteOfDay();
+    if (quiet_start_min <= quiet_end_min) return m >= quiet_start_min && m < quiet_end_min;
+    return m >= quiet_start_min || m < quiet_end_min;
+  }
+
+  // ---- appointments ----
+
+  bool addAppointment(const Appointment& a) {
+    removeExpiredAppointments();
+    if (appt_count >= MAX_APPOINTMENTS) return false;
+    appts[appt_count] = a;
+    appts[appt_count].reminded_start = -1;
+    appt_count++;
+    return true;
+  }
+
+  void removeAppointment(int i) {
+    if (i < 0 || i >= appt_count) return;
+    memmove(&appts[i], &appts[i + 1], sizeof(Appointment) * (appt_count - i - 1));
+    appt_count--;
+  }
+
+  // One-time appointments stay visible until 30 minutes after their start.
+  void removeExpiredAppointments() {
+    int64_t now = nowMinutes();
+    for (int i = appt_count - 1; i >= 0; i--) {
+      if (!appts[i].daily && now > appointmentStart(appts[i], now) + APPT_SHOW_AFTER_MIN) removeAppointment(i);
+    }
+  }
+
+  // The appointment that starts next (or started less than 30 minutes ago); -1 if none.
+  int nextAppointment() const {
+    int64_t now = nowMinutes();
+    int best = -1;
+    int64_t best_start = 0;
+    for (int i = 0; i < appt_count; i++) {
+      int64_t st = appointmentStart(appts[i], now);
+      if (now > st + APPT_SHOW_AFTER_MIN) continue;
+      if (best < 0 || st < best_start) { best = i; best_start = st; }
+    }
+    return best;
+  }
+
+  // Appointment whose reminder is due now (5 minutes before the start), marked as reminded.
+  int takeDueReminder() {
+    int64_t now = nowMinutes();
+    for (int i = 0; i < appt_count; i++) {
+      int64_t st = appointmentStart(appts[i], now);
+      if (now >= st - APPT_REMIND_BEFORE_MIN && now < st + APPT_SHOW_AFTER_MIN && appts[i].reminded_start != st) {
+        appts[i].reminded_start = st;
+        return i;
+      }
+    }
+    return -1;
   }
 };
 
