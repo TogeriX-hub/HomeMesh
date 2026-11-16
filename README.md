@@ -2,29 +2,80 @@
 
 A desk unit for text messaging over a [MeshCore](https://github.com/meshcore-dev/MeshCore) LoRa mesh, without internet or mobile network.
 
-HomeMesh is built for people who are not into radio technology: a clock, incoming messages in full screen, large buttons and an on-screen keyboard. The device works on its own, and the regular MeshCore app can still be connected over Bluetooth.
+![HomeMesh design mockup: home screen, new message, conversation, night clock](assets/mockup.png)
+<sub>Design mockup, not a screenshot of the firmware.</sub>
 
-> **Status:** planning. There is no HomeMesh code in this repository yet.
+> **Status:** planning. There is no HomeMesh firmware code in this repository yet.
 > This is a personal project. There is no prebuilt firmware.
+
+## Why
+
+Phones and the internet fail together: in a power cut, a network outage or a storm. A LoRa mesh keeps working as long as the repeaters have power. HomeMesh puts that on a table at home, for people who don't want to deal with radio technology.
+
+The device looks and behaves like a small clock with a screen. Messages from family arrive in full screen, replies are typed on a large on-screen keyboard or picked from quick replies. There are no menus about frequencies, hops or channels in everyday use.
 
 ## Hardware
 
-- Seeed SenseCAP Indicator D1L (ESP32-S3 + RP2040, 3.95" 480×480 touch display, SX1262, USB-C power)
+| | |
+|---|---|
+| Device | Seeed SenseCAP Indicator D1L |
+| MCU | ESP32-S3 (UI, radio, Bluetooth, Wi-Fi) + RP2040 (buzzer) |
+| Display | 3.95" 480×480 capacitive touch |
+| Radio | SX1262, 868 MHz |
+| Input | touch, one button |
+| Power | USB-C only, no battery – a power bank keeps it running during a power cut |
+
+## How it works
+
+HomeMesh is a regular **MeshCore companion** with its own on-device interface.
+
+- **Setup happens in the MeshCore app:** contacts, favourites, channels, radio settings and scope. The firmware never creates contacts or channels on its own.
+- **The app keeps working** over Bluetooth at any time. The display shows messages whether the app is connected or not.
+- **Favourites** (marked in the app) get a large shortcut button on the home screen, with an optional display-only name.
 
 ## Planned features
 
-- Home screen with clock, signal status and shortcuts to favourite contacts
-- Full-screen notification for messages from favourites, quiet counters for everything else
-- Channels to read and write, without notifications
-- Night mode with dark theme and dimmed backlight
-- Remote commands from favourites (status, pinned note, appointments)
-- Wi-Fi firmware update
+**Home screen**
+- Large clock and date, radio status ("signal ok" / "no signal")
+- Shortcut buttons for favourites, plus *Messages* and *Channels*
+- A pinned note and the next appointment
+- A one-line notice for real alerts from a warning bot channel (status replies and queries are ignored)
 
-Setup (contacts, favourites, channels, radio settings) is done in the MeshCore app. The firmware does not create contacts or channels on its own.
+**Messages**
+- Messages from favourites open in full screen with one sound. Several unread messages are collected on one screen. After one hour the full screen closes and a counter remains.
+- Messages from other contacts arrive quietly with a counter.
+- Delivery status per message (on the way / delivered / not delivered) and a *Send again* button.
+- Channels can be read and written, without notifications.
+
+**Night mode**
+- Configurable quiet hours: dark theme, dimmed backlight, clock only, no sound.
+
+**Remote commands** – sent as direct messages from a favourite; they never show up in the chat on the device:
+
+| Command | Effect |
+|---|---|
+| `!status` | radio, repeaters heard, uptime, time source, last read message |
+| `!pin <text>` / `!unpin` | set or clear the pinned note |
+| `!termin <name> <day> <time>` | add an appointment with a reminder (e.g. `!termin Anrufen morgen 19:00`) |
+| `!termine` | list appointments |
+| `!klingeln` | ring and flash until someone taps the screen |
+| `!nachtruhe 22-7` | set quiet hours |
+| `!update` | open the Wi-Fi update page |
+
+The device language is German, so the command names are too.
+
+**Maintenance**
+- Technical page with repeaters heard, signal and time source
+- Placement helper: live signal bar while carrying the device around
+- Wi-Fi firmware update from the settings, with QR codes for the phone
+- QR code to add the device as a contact
+- Writes settings and history safely, so a power cut does not lose data
 
 ## Repository layout
 
-`main` follows upstream MeshCore unchanged. HomeMesh work happens on `dev`.
+- `main` follows upstream MeshCore unchanged.
+- `dev` holds the HomeMesh work and is the default branch.
+- Files from upstream MeshCore are left as they are, so upstream updates can be merged cleanly.
 
 ## License
 
