@@ -23,6 +23,7 @@ static const int MAX_REPEATERS = 6;
 static const int MAX_WIFI_NETWORKS = 8;
 static const int TEXT_LEN = 161;      // MeshCore text payload + terminator
 static const int NAME_LEN = 32;
+static const uint32_t WARNING_SHOW_S = 6 * 3600UL;   // a warning line disappears after 6 hours
 
 enum class Delivery : uint8_t { None, Pending, Delivered, Failed, Sent };
 
@@ -121,6 +122,7 @@ struct Model {
 
   // home screen extras
   char warning[TEXT_LEN];   // empty = none
+  uint32_t warning_at;      // local unix time the warning arrived
   char pin[TEXT_LEN];       // empty = none
   Appointment appts[MAX_APPOINTMENTS];
   int appt_count;
@@ -153,6 +155,71 @@ struct Model {
   uint32_t last_read_at;         // unix time a favourite's messages were last read on the device
 
   void clear() { memset(this, 0, sizeof(*this)); }
+
+  // Settings of a new device (also used when the saved state is unreadable).
+  void applyDefaults() {
+    quiet_enabled = true;
+    quiet_start_min = 22 * 60;
+    quiet_end_min = 7 * 60;
+    sound_on = true;
+    brightness_day = 80;
+    brightness_night = 15;
+    advert_interval_h = 4;
+    large_text = false;
+  }
+
+  // ---- conversations ----
+
+  int findConversation(const uint8_t prefix[6]) const {
+    for (int i = 0; i < conv_count; i++) {
+      if (memcmp(convs[i].pubkey_prefix, prefix, 6) == 0) return i;
+    }
+    return -1;
+  }
+
+  // Finds the conversation for a contact or makes room for it. Favourites
+  // always get one; when the list is full, the non-favourite conversation
+  // that was quiet the longest is dropped. Returns -1 if nothing can go.
+  int ensureConversation(const uint8_t prefix[6], const char* name, bool favourite) {
+    int i = findConversation(prefix);
+    if (i < 0) {
+      if (conv_count == MAX_CONVERSATIONS) {
+        int victim = -1;
+        uint32_t oldest = 0;
+        for (int k = 0; k < conv_count; k++) {
+          if (convs[k].favourite) continue;
+          const Message* last = convs[k].log.last();
+          uint32_t t = last ? last->time : 0;
+          if (victim < 0 || t < oldest) { victim = k; oldest = t; }
+        }
+        if (victim < 0) return -1;
+        memmove(&convs[victim], &convs[victim + 1], sizeof(Conversation) * (conv_count - victim - 1));
+        conv_count--;
+      }
+      i = conv_count++;
+      memset(&convs[i], 0, sizeof(Conversation));
+      memcpy(convs[i].pubkey_prefix, prefix, 6);
+    }
+    if (name && name[0]) copyText(convs[i].name, sizeof(convs[i].name), name);
+    convs[i].favourite = favourite;
+    return i;
+  }
+
+  int findChannel(const char* name) const {
+    for (int i = 0; i < channel_count; i++) {
+      if (strcmp(channels[i].name, name) == 0) return i;
+    }
+    return -1;
+  }
+
+  void setWarning(const char* text) {
+    copyText(warning, sizeof(warning), text);
+    warning_at = nowUnix();
+  }
+
+  void expireWarning() {
+    if (warning[0] && time_valid && nowUnix() - warning_at >= WARNING_SHOW_S) warning[0] = 0;
+  }
 
   // favourites in contact-list order, up to MAX_FAVOURITES
   int favourites(int out[MAX_FAVOURITES]) const {
