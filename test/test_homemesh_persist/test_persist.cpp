@@ -30,6 +30,8 @@ void fill(Model& m) {
   strcpy(m.pin, "Sonntag 12 Uhr Essen");
   strcpy(m.warning, "DWD · Sturmböen");
   m.warning_at = 987654;
+  strcpy(m.wifi_ssid, "Heimnetz");
+  strcpy(m.wifi_pwd, "geheim 123");
 
   Appointment a = {};
   a.status = ApptStatus::Ok;
@@ -91,6 +93,8 @@ TEST(HomeMeshPersist, RoundTrip) {
   EXPECT_STREQ("Sonntag 12 Uhr Essen", b->pin);
   EXPECT_STREQ("DWD · Sturmböen", b->warning);
   EXPECT_EQ(987654u, b->warning_at);
+  EXPECT_STREQ("Heimnetz", b->wifi_ssid);
+  EXPECT_STREQ("geheim 123", b->wifi_pwd);
 
   ASSERT_EQ(2, b->appt_count);
   EXPECT_STREQ("Anrufen", b->appts[0].name);
@@ -174,6 +178,8 @@ TEST(HomeMeshPersist, FullModelFitsTheBuffer) {
   }
   strcpy(a->pin, longtext.c_str());
   strcpy(a->warning, longtext.c_str());
+  strcpy(a->wifi_ssid, std::string(32, 's').c_str());
+  strcpy(a->wifi_pwd, std::string(63, 'p').c_str());
   for (int i = 0; i < MAX_APPOINTMENTS; i++) strcpy(a->appts[a->appt_count++].name, std::string(APPT_NAME_MAX - 1, 'a').c_str());
 
   std::vector<uint8_t> buf(PERSIST_MAX_BYTES);
@@ -222,4 +228,20 @@ TEST(HomeMeshModel, WarningExpiresAfterSixHours) {
   m->hour = 16; m->minute = 0;
   m->expireWarning();
   EXPECT_EQ(0, m->warning[0]);
+}
+
+TEST(HomeMeshModel, RepeaterListKeepsRecentOnes) {
+  auto m = freshModel();
+  char name[16];
+  for (int i = 0; i < MAX_REPEATERS; i++) {
+    snprintf(name, sizeof(name), "R%d", i);
+    m->noteRepeater(name, (float)i, 100 + i);
+  }
+  m->noteRepeater("R3", 9.5f, 500);           // known: updated in place
+  EXPECT_EQ(MAX_REPEATERS, m->repeater_count);
+  EXPECT_FLOAT_EQ(9.5f, m->repeaters[3].snr);
+  m->noteRepeater("New", -3.0f, 600);         // replaces R0 (heard longest ago)
+  EXPECT_EQ(MAX_REPEATERS, m->repeater_count);
+  EXPECT_STREQ("New", m->repeaters[0].name);
+  EXPECT_EQ(600u, m->repeaters[0].heard_at_s);
 }

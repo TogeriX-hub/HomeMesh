@@ -1,8 +1,8 @@
 #pragma once
 
 // Saves the parts of the model that must survive a power cut: settings,
-// display names, appointments, the pinned note, the warning line and the
-// message history.
+// the Wi-Fi network, display names, appointments, the pinned note, the
+// warning line and the message history.
 //
 // The format is a small versioned binary record with a CRC32 at the end.
 // The firmware writes it to a temporary file and renames it over the old
@@ -32,7 +32,7 @@ namespace detail {
 
 // Upper bound of a saved record, for the save buffer.
 constexpr size_t PERSIST_MAX_BYTES =
-    4 + detail::SETTINGS_MAX + 4 +
+    4 + detail::SETTINGS_MAX + 4 + (1 + 33) + (1 + 64) +
     2 * (1 + TEXT_LEN) + 4 +
     1 + MAX_APPOINTMENTS * detail::APPT_MAX +
     1 + MAX_CONVERSATIONS * (6 + 2 * (1 + NAME_LEN) + 1 + detail::LOG_MAX) +
@@ -152,6 +152,8 @@ inline size_t serializeState(const Model& m, uint8_t* buf, size_t cap) {
   w.u8(m.brightness_night);
   w.u8(m.advert_interval_h);
   w.u32(m.last_read_at);
+  w.str(m.wifi_ssid, sizeof(m.wifi_ssid));
+  w.str(m.wifi_pwd, sizeof(m.wifi_pwd));
 
   // home screen
   w.str(m.pin, sizeof(m.pin));
@@ -202,6 +204,7 @@ inline bool deserializeState(Model& m, const uint8_t* buf, size_t len) {
     m.warning_at = 0;
     m.appt_count = m.conv_count = m.channel_count = 0;
     m.last_read_at = 0;
+    m.wifi_ssid[0] = m.wifi_pwd[0] = 0;
     m.applyDefaults();
     return false;
   };
@@ -221,6 +224,8 @@ inline bool deserializeState(Model& m, const uint8_t* buf, size_t len) {
   m.brightness_night = r.u8();
   m.advert_interval_h = r.u8();
   m.last_read_at = r.u32();
+  r.str(m.wifi_ssid, sizeof(m.wifi_ssid));
+  r.str(m.wifi_pwd, sizeof(m.wifi_pwd));
 
   r.str(m.pin, sizeof(m.pin));
   r.str(m.warning, sizeof(m.warning));

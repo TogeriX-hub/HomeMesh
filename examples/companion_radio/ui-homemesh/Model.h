@@ -148,6 +148,7 @@ struct Model {
 
   // Wi-Fi
   char wifi_ssid[33];            // empty = not configured
+  char wifi_pwd[64];             // never shown
   bool wifi_connected;
   WifiNetwork networks[MAX_WIFI_NETWORKS];
   int network_count;
@@ -210,6 +211,26 @@ struct Model {
       if (strcmp(channels[i].name, name) == 0) return i;
     }
     return -1;
+  }
+
+  // A repeater advert heard directly (no hops). The list keeps the most
+  // recently heard repeaters; the oldest entry makes room.
+  void noteRepeater(const char* name, float snr, uint32_t now_s) {
+    int i = 0;
+    while (i < repeater_count && strcmp(repeaters[i].name, name) != 0) i++;
+    if (i == repeater_count) {
+      if (repeater_count < MAX_REPEATERS) {
+        repeater_count++;
+      } else {
+        i = 0;
+        for (int k = 1; k < repeater_count; k++) {
+          if (repeaters[k].heard_at_s < repeaters[i].heard_at_s) i = k;
+        }
+      }
+      copyText(repeaters[i].name, sizeof(repeaters[i].name), name);
+    }
+    repeaters[i].snr = snr;
+    repeaters[i].heard_at_s = now_s;
   }
 
   void setWarning(const char* text) {
