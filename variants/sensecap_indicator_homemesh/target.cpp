@@ -86,6 +86,15 @@ bool radio_init() {
   return radio.std_init();
 }
 
+#ifdef DISPLAY_CLASS
+bool readTouch(int* x, int* y) {
+  if (i2c_mutex && xSemaphoreTake(i2c_mutex, pdMS_TO_TICKS(20)) != pdTRUE) return false;
+  bool touched = display.getTouch(x, y);
+  if (i2c_mutex) xSemaphoreGive(i2c_mutex);
+  return touched;
+}
+#endif
+
 void IndicatorBoard::powerOff() {
 #ifdef DISPLAY_CLASS
   display.turnOff();

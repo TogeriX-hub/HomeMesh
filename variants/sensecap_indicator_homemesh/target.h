@@ -9,7 +9,7 @@
 
 #ifdef DISPLAY_CLASS
   // Display and touch setup is identical to the upstream ESP-NOW variant.
-  #include "../sensecap_indicator-espnow/SCIndicatorDisplay.h"
+  #include "HomeMeshDisplay.h"
   #include <helpers/ui/MomentaryButton.h>
 #endif
 
@@ -29,6 +29,8 @@ extern SensorManager sensors;  // no sensors on the ESP32 side of the D1L
 #ifdef DISPLAY_CLASS
   extern DISPLAY_CLASS display;
   extern MomentaryButton user_btn;
+  // Touch read that shares the I2C bus safely with the radio expander.
+  bool readTouch(int* x, int* y);
 #endif
 
 bool radio_init();
