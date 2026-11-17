@@ -439,6 +439,7 @@ ContactInfo*  MyMesh::processAck(const uint8_t *data) {
 
 void MyMesh::queueMessage(const ContactInfo &from, uint8_t txt_type, mesh::Packet *pkt,
                           uint32_t sender_timestamp, const uint8_t *extra, int extra_len, const char *text) {
+  if (_listener && _listener->interceptMessage(from, txt_type, text)) return;   // HomeMesh hook
   int i = 0;
   if (app_target_ver >= 3) {
     out_frame[i++] = RESP_CODE_CONTACT_MSG_RECV_V3;
@@ -1164,6 +1165,9 @@ void MyMesh::handleCmdFrame(size_t len) {
           next_ack_idx = (next_ack_idx + 1) % EXPECTED_ACK_TABLE_SIZE;
         }
 
+        if (_listener && txt_type == TXT_TYPE_PLAIN) {   // HomeMesh hook
+          _listener->onAppMessageSent(*recipient, attempt, text, expected_ack, est_timeout);
+        }
         out_frame[0] = RESP_CODE_SENT;
         out_frame[1] = (result == MSG_SEND_SENT_FLOOD) ? 1 : 0;
         memcpy(&out_frame[2], &expected_ack, 4);
@@ -1190,6 +1194,7 @@ void MyMesh::handleCmdFrame(size_t len) {
       ChannelDetails channel;
       bool success = getChannel(channel_idx, channel);
       if (success && sendGroupMessage(msg_timestamp, channel.channel, _prefs.node_name, text, len - i)) {
+        if (_listener) _listener->onAppChannelMessageSent(channel_idx, text, len - i);   // HomeMesh hook
         writeOKFrame();
       } else {
         writeErrFrame(ERR_CODE_NOT_FOUND); // bad channel_idx
