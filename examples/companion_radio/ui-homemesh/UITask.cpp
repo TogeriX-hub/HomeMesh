@@ -13,6 +13,7 @@
 
 #include "Persist.h"
 #include "RemoteCommands.h"
+#include "Rp2040Link.h"
 #include "ShareLink.h"
 #include "TimeZone.h"
 #include "Warnings.h"
@@ -27,6 +28,8 @@ static const unsigned long SYNC_MS = 30000;              // re-read contacts and
 static const unsigned long ACK_MARGIN_MS = 3000;         // on top of MeshCore's estimate
 static const unsigned long APP_ACK_TIMEOUT_MS = 30000;   // app sends: no estimate from the hook
 static const int LV_BUF_LINES = 60;
+static const int RP_TX_PIN = 19;   // UART to the RP2040, which drives the buzzer
+static const int RP_RX_PIN = 20;
 
 static UITask* s_task = nullptr;
 static uint8_t* s_save_buf = nullptr;     // PSRAM, PERSIST_MAX_BYTES
@@ -75,6 +78,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     WiFi.begin(_m->wifi_ssid, _m->wifi_pwd);
   }
 
+  Serial1.begin(RP_BAUD, SERIAL_8N1, RP_RX_PIN, RP_TX_PIN);
   user_btn.begin();
   initLvgl();
   _ui.begin(_m, this);
@@ -387,6 +391,7 @@ bool UITask::interceptMessage(const ContactInfo& from, uint8_t txt_type, const c
   if (r.ring) _ui.onRing();
   if (r.update) startUpdate();
   if (r.reboot) _reboot_at_ms = millis() + 3000;
+  if (!_m->sound_on) stopSound();
   _m->night = _m->inQuietHours();
   _last_night = _m->night;
   saveSettings();
@@ -600,6 +605,20 @@ void UITask::applyBrightness() {
   _want_brightness = want;
   setBrightness(want);
 }
+
+// ---------------------------------------------------------------- sound
+
+// The buzzer hangs on the RP2040; it needs the HomeMesh RP2040 firmware
+// (examples/homemesh_rp2040). Without it the commands are simply ignored.
+void UITask::sendToRp2040(uint8_t type, uint32_t para) {
+  uint8_t frame[8];
+  size_t n = buildRpCommand(type, para, frame);
+  Serial1.write(frame, n);
+}
+
+void UITask::playSound(Sound s) { sendToRp2040(RP_PKT_BEEP_ON, (uint32_t)s); }
+
+void UITask::stopSound() { sendToRp2040(RP_PKT_BEEP_OFF, 0); }
 
 // ---------------------------------------------------------------- Wi-Fi and update
 

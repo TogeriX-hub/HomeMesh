@@ -143,9 +143,57 @@ const WASM_BASE64 = "__WASM_BASE64__";
     canvas.classList.toggle('off', !!e.hm_screen_off());
     canvas.classList.remove('dim');
     canvas.style.filter = e.hm_screen_off() ? 'brightness(0)' : 'brightness(' + (0.35 + 0.65 * e.hm_brightness() / 100).toFixed(2) + ')';
+    const snd = e.hm_take_sound();
+    if (snd > 0) playSound(snd); else if (snd < 0) stopSound();
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
+
+  // Buzzer: the tone patterns come from the firmware (Rp2040Link.h). Browsers
+  // only allow audio after a click, so the context starts on the first one.
+  let actx = null, ringTimer = null, tones = [];
+  document.addEventListener('pointerdown', () => {
+    if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+    if (actx.state === 'suspended') actx.resume();
+  });
+  function stopSound() {
+    clearInterval(ringTimer);
+    ringTimer = null;
+    tones.forEach(o => { try { o.stop(); } catch (_) {} });
+    tones = [];
+  }
+  function playSound(id) {
+    stopSound();
+    if (!actx) return;
+    const n = e.hm_pattern_len(id);
+    if (!n) return;
+    const once = () => {
+      let t = actx.currentTime, total = 0;
+      for (let i = 0; i < n; i++) {
+        const hz = e.hm_pattern_hz(id, i), ms = e.hm_pattern_ms(id, i);
+        if (hz) {
+          const o = actx.createOscillator(), g = actx.createGain();
+          o.type = 'square';
+          o.frequency.value = hz;
+          g.gain.value = 0.04;
+          o.connect(g).connect(actx.destination);
+          o.start(t);
+          o.stop(t + ms / 1000);
+          tones.push(o);
+        }
+        t += ms / 1000;
+        total += ms;
+      }
+      return total;
+    };
+    const dur = once();
+    if (e.hm_pattern_repeats(id)) {
+      const t0 = performance.now();
+      ringTimer = setInterval(() => {
+        if (performance.now() - t0 > e.hm_ring_max_ms()) stopSound(); else { tones = []; once(); }
+      }, dur);
+    }
+  }
 
   setInterval(() => { const n = new Date(); e.hm_set_time(n.getHours(), n.getMinutes()); }, 5000);
 

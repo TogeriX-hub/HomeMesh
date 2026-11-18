@@ -55,6 +55,8 @@ public:
   void stopUpdate() override;
   void ringAcknowledged() override {}
   void setBrightness(uint8_t percent) override;
+  void playSound(homemesh::Sound s) override;
+  void stopSound() override;
 
 private:
   static const int MAX_PENDING = 8;
@@ -106,6 +108,7 @@ private:
   uint8_t _want_brightness = 0xFF;
 
   void initLvgl();
+  void sendToRp2040(uint8_t type, uint32_t para);
   void refreshUi();
   void loadState();
   void saveState(bool force);

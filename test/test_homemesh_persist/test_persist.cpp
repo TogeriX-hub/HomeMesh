@@ -245,3 +245,19 @@ TEST(HomeMeshModel, RepeaterListKeepsRecentOnes) {
   EXPECT_STREQ("New", m->repeaters[0].name);
   EXPECT_EQ(600u, m->repeaters[0].heard_at_s);
 }
+
+TEST(HomeMeshModel, SoundRules) {
+  auto m = freshModel();
+  m->applyDefaults();   // sound on, quiet hours 22-7
+  m->time_valid = true;
+  m->date = { 2026, 11, 17 };
+  m->hour = 12; m->minute = 0;
+  EXPECT_TRUE(m->soundAllowed(Sound::Message));
+  m->hour = 23;
+  EXPECT_FALSE(m->soundAllowed(Sound::Message));
+  EXPECT_TRUE(m->soundAllowed(Sound::Reminder));
+  EXPECT_TRUE(m->soundAllowed(Sound::Ring));
+  m->sound_on = false;
+  EXPECT_FALSE(m->soundAllowed(Sound::Reminder));
+  EXPECT_FALSE(m->soundAllowed(Sound::Ring));
+}

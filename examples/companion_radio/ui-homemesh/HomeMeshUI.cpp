@@ -312,6 +312,7 @@ void HomeMeshUI::onFavouriteMessage(uint32_t now_ms) {
   _back_n = 0;
   _view = View::NewMessages;
   _screen_off = false;
+  sound(Sound::Message);
   build();
 }
 
@@ -328,6 +329,7 @@ void HomeMeshUI::onRing() {
   _idle = false;
   _back_n = 0;
   _view = View::Ring;
+  sound(Sound::Ring);
   build();
 }
 
@@ -340,6 +342,7 @@ void HomeMeshUI::tick(uint32_t now_ms) {
     if (due >= 0 || (snooze_over && _reminder_appt >= 0)) {
       if (due >= 0) _reminder_appt = due;
       _snooze_until_min = -1;
+      sound(Sound::Reminder);
       _screen_off = false;
       _idle = false;
       _back_n = 0;
@@ -1283,10 +1286,12 @@ void HomeMeshUI::onClick(lv_event_t* e) {
     case A_UPDATE_START: ui->_act->startUpdate(); ui->go(View::Update); break;
     case A_UPDATE_STOP: ui->_act->stopUpdate(); ui->show(View::Home); break;
     case A_SNOOZE:
+      ui->_act->stopSound();
       ui->_snooze_until_min = ui->_m->nowMinutes() + APPT_REMIND_BEFORE_MIN;
       ui->show(View::Home);
       break;
     case A_HERE: {
+      ui->_act->stopSound();
       int fav = ui->_m->firstFavourite();
       if (fav >= 0) ui->_act->sendDirect(fav, "Bin da");
       ui->_reminder_appt = -1;
@@ -1294,7 +1299,7 @@ void HomeMeshUI::onClick(lv_event_t* e) {
       ui->show(View::Home);
       break;
     }
-    case A_RING_ACK: ui->_act->ringAcknowledged(); ui->show(View::Home); break;
+    case A_RING_ACK: ui->_act->stopSound(); ui->_act->ringAcknowledged(); ui->show(View::Home); break;
     case A_QUICK:
       if (ui->_textarea) lv_textarea_set_text(ui->_textarea, QUICK_REPLIES[arg]);
       break;

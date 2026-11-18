@@ -8,6 +8,7 @@
 
 #include "../SampleData.h"
 #include "../../RemoteCommands.h"
+#include "../../Rp2040Link.h"
 
 using namespace homemesh;
 
@@ -36,6 +37,7 @@ static int ack_count = 0;
 
 static uint32_t wifi_connect_due = 0;
 static int brightness = 80;
+static int pending_sound = 0;   // >0 pattern to play, -1 stop
 
 class WebActions : public SimActions {
 public:
@@ -50,6 +52,8 @@ public:
   void startUpdate() override { model.update_running = true; }
   void stopUpdate() override { model.update_running = false; }
   void setBrightness(uint8_t p) override { brightness = p; }
+  void playSound(Sound s) override { pending_sound = (int)s; }
+  void stopSound() override { pending_sound = -1; }
   void sendDirect(int conv, const char* text) override {
     SimActions::sendDirect(conv, text);
     queueAck(conv, model.convs[conv].log.count - 1);
@@ -169,6 +173,14 @@ EXPORT(hm_has_signal) int hm_has_signal() { return model.signal_level; }
 EXPORT(hm_set_snr) void hm_set_snr(float snr) { sim_snr = snr; }
 EXPORT(hm_is_silent) int hm_is_silent() { return sim_silent; }
 EXPORT(hm_brightness) int hm_brightness() { return ui.backlight(now_ms); }
+
+// Sound for the page: the same tone patterns the RP2040 plays.
+EXPORT(hm_take_sound) int hm_take_sound() { int s = pending_sound; pending_sound = 0; return s; }
+EXPORT(hm_pattern_len) int hm_pattern_len(int id) { return patternFor((uint32_t)id).count; }
+EXPORT(hm_pattern_repeats) int hm_pattern_repeats(int id) { return patternFor((uint32_t)id).repeat ? 1 : 0; }
+EXPORT(hm_pattern_hz) int hm_pattern_hz(int id, int i) { return patternFor((uint32_t)id).steps[i].hz; }
+EXPORT(hm_pattern_ms) int hm_pattern_ms(int id, int i) { return patternFor((uint32_t)id).steps[i].ms; }
+EXPORT(hm_ring_max_ms) int hm_ring_max_ms() { return (int)RING_MAX_MS; }
 
 // Remote command from the favourite: the page writes UTF-8 into this buffer,
 // calls hm_command() and reads the reply back from the same buffer.

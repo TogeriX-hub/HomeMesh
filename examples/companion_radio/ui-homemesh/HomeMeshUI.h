@@ -28,6 +28,8 @@ public:
   virtual void stopUpdate() {}
   virtual void ringAcknowledged() {}                   // someone tapped the ringing screen
   virtual void setBrightness(uint8_t percent) { (void)percent; }
+  virtual void playSound(Sound s) { (void)s; }         // only called when Model::soundAllowed()
+  virtual void stopSound() {}
 };
 
 enum class View : uint8_t {
@@ -80,6 +82,7 @@ public:
   void onTouch(uint32_t now_ms) { _last_touch_ms = now_ms; _idle = false; }
 
   bool screenOff() const { return _screen_off; }
+  void sound(Sound s) { if (_m->soundAllowed(s)) _act->playSound(s); }
 
   // A full-screen message notice that nobody looked at for 10 minutes is
   // dimmed to the night brightness until it is touched or a new one arrives.

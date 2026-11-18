@@ -100,6 +100,9 @@ struct WifiNetwork {
 
 enum class TimeSource : uint8_t { None, App, Wifi, Mesh };
 
+// Same numbers as the RP2040 link (SoundPattern).
+enum class Sound : uint8_t { Message = 1, Reminder = 2, Ring = 3 };
+
 struct Model {
   // clock
   bool time_valid;
@@ -274,6 +277,13 @@ struct Model {
     int m = minuteOfDay();
     if (quiet_start_min <= quiet_end_min) return m >= quiet_start_min && m < quiet_end_min;
     return m >= quiet_start_min || m < quiet_end_min;
+  }
+
+  // All sounds follow the sound switch. Message sounds keep the quiet hours;
+  // reminders and ringing do not - both were set up on purpose.
+  bool soundAllowed(Sound s) const {
+    if (!sound_on) return false;
+    return s != Sound::Message || !inQuietHours();
   }
 
   // ---- appointments ----
