@@ -81,6 +81,20 @@ public:
 
   bool screenOff() const { return _screen_off; }
 
+  // A full-screen message notice that nobody looked at for 10 minutes is
+  // dimmed to the night brightness until it is touched or a new one arrives.
+  static const uint32_t DIM_AFTER_MS = 10UL * 60 * 1000;
+  bool dimmed(uint32_t now_ms) const {
+    uint32_t since = _newmsg_since_ms > _last_touch_ms ? _newmsg_since_ms : _last_touch_ms;
+    return _view == View::NewMessages && now_ms - since > DIM_AFTER_MS;
+  }
+
+  // Backlight in percent for the current state.
+  uint8_t backlight(uint32_t now_ms) const {
+    if (_screen_off) return 0;
+    return (_m->night || dimmed(now_ms)) ? _m->brightness_night : _m->brightness_day;
+  }
+
 private:
   Model* _m = nullptr;
   UiActions* _act = nullptr;

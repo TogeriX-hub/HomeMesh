@@ -168,7 +168,7 @@ EXPORT(hm_is_large) int hm_is_large() { return model.large_text; }
 EXPORT(hm_has_signal) int hm_has_signal() { return model.signal_level; }
 EXPORT(hm_set_snr) void hm_set_snr(float snr) { sim_snr = snr; }
 EXPORT(hm_is_silent) int hm_is_silent() { return sim_silent; }
-EXPORT(hm_brightness) int hm_brightness() { return model.night ? model.brightness_night : model.brightness_day; }
+EXPORT(hm_brightness) int hm_brightness() { return ui.backlight(now_ms); }
 
 // Remote command from the favourite: the page writes UTF-8 into this buffer,
 // calls hm_command() and reads the reply back from the same buffer.
