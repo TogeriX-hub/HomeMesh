@@ -13,6 +13,7 @@
 
 #include "Persist.h"
 #include "RemoteCommands.h"
+#include "ShareLink.h"
 #include "TimeZone.h"
 #include "Warnings.h"
 
@@ -33,22 +34,6 @@ static Channel* s_channel_tmp = nullptr;  // PSRAM, for reordering channels
 
 static volatile bool s_ntp_synced = false;
 static void onNtpSync(struct timeval* tv) { (void)tv; s_ntp_synced = true; }
-
-static void urlEncode(const char* in, char* out, size_t cap) {
-  static const char HEX_DIGITS[] = "0123456789ABCDEF";
-  size_t o = 0;
-  for (; *in && o + 4 < cap; in++) {
-    uint8_t c = (uint8_t)*in;
-    if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.') {
-      out[o++] = (char)c;
-    } else {
-      out[o++] = '%';
-      out[o++] = HEX_DIGITS[c >> 4];
-      out[o++] = HEX_DIGITS[c & 15];
-    }
-  }
-  out[o] = 0;
-}
 
 // ---------------------------------------------------------------- setup
 
@@ -77,13 +62,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   copyText(_m->node_name, sizeof(_m->node_name), _prefs->node_name);
   _m->ble_pin = the_mesh.getBLEPin();
 
-  // Contact link for the QR code. Placeholder format until the MeshCore app's
-  // link format is confirmed.
-  char hex[PUB_KEY_SIZE * 2 + 1];
-  mesh::Utils::toHex(hex, the_mesh.self_id.pub_key, PUB_KEY_SIZE);
-  char name[3 * sizeof(_prefs->node_name)];
-  urlEncode(_prefs->node_name, name, sizeof(name));
-  snprintf(_m->share_uri, sizeof(_m->share_uri), "meshcore://contact/add?name=%s&public_key=%s&type=1", name, hex);
+  // contact link for the QR code (scanned with the MeshCore app)
+  buildContactLink(_prefs->node_name, the_mesh.self_id.pub_key, CONTACT_TYPE_COMPANION,
+                   _m->share_uri, sizeof(_m->share_uri));
 
   // Wi-Fi is only used for the clock (and the update hotspot). It is set up
   // here instead of the companion's Wi-Fi interface, so no app port is
@@ -614,7 +595,7 @@ void UITask::setBrightness(uint8_t percent) {
 // Follows the model only when the wanted value changes, so the settings
 // slider can preview a value with setBrightness().
 void UITask::applyBrightness() {
-  uint8_t want = _ui.screenOff() ? 0 : (_m->night ? _m->brightness_night : _m->brightness_day);
+  uint8_t want = _ui.backlight(millis());
   if (want == _want_brightness) return;
   _want_brightness = want;
   setBrightness(want);

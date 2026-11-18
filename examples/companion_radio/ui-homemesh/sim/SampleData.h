@@ -80,7 +80,7 @@ inline void sampleData() {
   strcpy(model.node_name, "HomeMesh Tisch");
   model.ble_pin = 123456;
   // placeholder: the firmware fills in the real MeshCore contact link
-  strcpy(model.share_uri, "meshcore://contact/add?name=HomeMesh%20Tisch&public_key=0000&type=1");
+  strcpy(model.share_uri, "meshcore://contact/add?name=HomeMesh+Tisch&public_key=0000000000000000000000000000000000000000000000000000000000000000&type=1");
   model.time_source = TimeSource::App;
   model.uptime_s = 3 * 86400 + 4 * 3600;
   model.time_set_at_s = model.uptime_s - 2 * 86400;

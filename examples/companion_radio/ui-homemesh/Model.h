@@ -144,7 +144,7 @@ struct Model {
   char fw_version[16];
   char node_name[NAME_LEN];
   uint32_t ble_pin;
-  char share_uri[200];           // contact link for the QR code (filled by the firmware)
+  char share_uri[220];           // contact link for the QR code (filled by the firmware)
 
   // Wi-Fi
   char wifi_ssid[33];            // empty = not configured
