@@ -11,6 +11,7 @@
 #include <helpers/UTF8Helpers.h>
 #include "Appointment.h"
 #include "SignalMeter.h"
+#include "Diagnostics.h"
 
 namespace homemesh {
 
@@ -145,6 +146,7 @@ struct Model {
   uint32_t uptime_s;
   uint32_t last_advert_at_s;
   char fw_version[16];
+  Diagnostics diag;              // runtime measurements, filled by the firmware
   char node_name[NAME_LEN];
   uint32_t ble_pin;
   char share_uri[220];           // contact link for the QR code (filled by the firmware)

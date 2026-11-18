@@ -1033,6 +1033,25 @@ void HomeMeshUI::buildTechnical(lv_obj_t* scr) {
   settingsRow(list, "Gerätename", _m->node_name, T.muted);
   snprintf(v, sizeof(v), "HomeMesh %s", _m->fw_version);
   settingsRow(list, "Firmware", v, T.muted);
+
+  // measurements for the first tests (also !diag)
+  const Diagnostics& dg = _m->diag;
+  sectionTitle(list, "Diagnose");
+  snprintf(v, sizeof(v), "%lu ms, seit Start %lu ms", (unsigned long)dg.loop_ms.recent(), (unsigned long)dg.loop_ms.all);
+  settingsRow(list, "Schleife (max)", v, dg.loop_ms.recent() > DIAG_SLOW_LOOP_MS ? T.warn : T.muted);
+  snprintf(v, sizeof(v), "%lu", (unsigned long)dg.slow_loops);
+  settingsRow(list, "Schleife > 100 ms", v, T.muted);
+  snprintf(v, sizeof(v), "%lu ms", (unsigned long)dg.render_ms.recent());
+  settingsRow(list, "Zeichnen (max)", v, T.muted);
+  snprintf(v, sizeof(v), "%lu ms, %lux, %lu B", (unsigned long)dg.save_ms.all, (unsigned long)dg.saves, (unsigned long)dg.save_bytes);
+  settingsRow(list, "Speichern (max)", v, T.muted);
+  snprintf(v, sizeof(v), "%lu KB, min %lu, Block %lu", (unsigned long)(dg.heap_free / 1024),
+           (unsigned long)(dg.heap_min / 1024), (unsigned long)(dg.heap_largest / 1024));
+  settingsRow(list, "RAM frei", v, dg.heap_min < 20 * 1024 ? T.warn : T.muted);
+  snprintf(v, sizeof(v), "%lu KB", (unsigned long)(dg.psram_free / 1024));
+  settingsRow(list, "PSRAM frei", v, T.muted);
+  snprintf(v, sizeof(v), "%lu empf., %lu Fehler, %lu ges.", (unsigned long)dg.rx, (unsigned long)dg.rx_errors, (unsigned long)dg.tx);
+  settingsRow(list, "Pakete", v, T.muted);
 }
 
 void HomeMeshUI::buildPlacement(lv_obj_t* scr) {
