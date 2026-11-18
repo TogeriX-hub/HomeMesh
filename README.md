@@ -42,7 +42,7 @@ HomeMesh is a regular **MeshCore companion** with its own on-device interface.
 - A one-line notice for real alerts from a warning bot channel (status replies and queries are ignored)
 
 **Messages**
-- Messages from favourites open in full screen with one sound. Several unread messages are collected on one screen. After one hour the full screen closes and a counter remains.
+- Messages from favourites open in full screen with one sound (buzzer on the RP2040). After 10 minutes without a touch the screen dims. Several unread messages are collected on one screen. After one hour the full screen closes and a counter remains.
 - Messages from other contacts arrive quietly with a counter.
 - Delivery status per message (on the way / delivered / not delivered) and a *Send again* button.
 - Channels can be read and written, without notifications.
@@ -71,11 +71,25 @@ The device language is German, so the command names are too.
 - QR code to add the device as a contact
 - Writes settings and history safely, so a power cut does not lose data
 
+## Status
+
+The firmware builds but has not run on the device yet. Hardware tests come next.
+
+## Building
+
+| Environment | What it is |
+|---|---|
+| `SenseCapIndicator_HomeMesh` | HomeMesh firmware for the ESP32-S3 |
+| `SenseCapIndicator_HomeMesh_rp2040` | Small buzzer firmware for the RP2040 (`examples/homemesh_rp2040`). Flash `firmware.uf2`: hold the button on the underside while plugging in USB, then copy the file to the RPI-RP2 drive. |
+| `SenseCapIndicator_HomeMesh_bringup` | Stock companion with the upstream UI, for a first radio test |
+
+The interface lives in `examples/companion_radio/ui-homemesh`. Pure logic (time zone, appointments, remote commands, storage, signal meter) is header-only and covered by unit tests in `test/test_homemesh_*`. A desktop and a browser simulator of the interface are in `ui-homemesh/sim`.
+
 ## Repository layout
 
 - `main` follows upstream MeshCore unchanged.
 - `dev` holds the HomeMesh work and is the default branch.
-- Files from upstream MeshCore are left as they are, so upstream updates can be merged cleanly.
+- Files from upstream MeshCore are left as they are, except for three small marked hooks in `examples/companion_radio/MyMesh.h/.cpp`, so upstream updates can be merged cleanly.
 
 ## License
 
