@@ -198,9 +198,15 @@ inline void handleRemoteCommand(Model& m, const char* text, CommandResult& r) {
     snprintf(r.reply, sizeof(r.reply), "OK · WLAN MeshCore-OTA offen, Seite 192.168.4.1/update");
     return;
   }
+  if (startsWithWord(cmd, "diag", &arg)) {
+    char line[TEXT_LEN];
+    m.diag.format(line, sizeof(line));
+    snprintf(r.reply, sizeof(r.reply), "%s", line);
+    return;
+  }
   if (startsWithWord(cmd, "neustart", &arg)) { r.reboot = true; snprintf(r.reply, sizeof(r.reply), "OK · startet neu"); return; }
 
-  snprintf(r.reply, sizeof(r.reply), "Unbekannt · !status !pin !unpin !termin !termine !nachtruhe !ton !klingeln !advert !update !neustart");
+  snprintf(r.reply, sizeof(r.reply), "Unbekannt · !status !pin !unpin !termin !termine !nachtruhe !ton !klingeln !advert !update !neustart !diag");
 }
 
 }  // namespace homemesh

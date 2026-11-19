@@ -95,6 +95,7 @@ private:
   unsigned long _next_clock_ms = 0, _next_sync_ms = 0, _next_signal_refresh_ms = 0;
   unsigned long _save_due_ms = 0, _next_save_check_ms = 0;
   unsigned long _reboot_at_ms = 0;
+  unsigned long _last_loop_ms = 0, _next_diag_log_ms = 0;
   uint32_t _saved_crc = 0;
   uint32_t _last_utc = 0;
   uint32_t _next_advert_s = 60;
@@ -108,6 +109,7 @@ private:
   uint8_t _want_brightness = 0xFF;
 
   void initLvgl();
+  void updateDiagnostics();
   void sendToRp2040(uint8_t type, uint32_t para);
   void refreshUi();
   void loadState();

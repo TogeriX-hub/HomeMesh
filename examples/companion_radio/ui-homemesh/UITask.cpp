@@ -180,6 +180,7 @@ void UITask::saveState(bool force) {
   uint32_t crc = crc32(s_save_buf, n);
   if (!force && crc == _saved_crc) return;
 
+  unsigned long t0 = millis();
   File f = SPIFFS.open(STATE_TMP, "w");
   if (!f) return;
   size_t written = f.write(s_save_buf, n);
@@ -188,6 +189,9 @@ void UITask::saveState(bool force) {
   SPIFFS.remove(STATE_FILE);
   SPIFFS.rename(STATE_TMP, STATE_FILE);
   _saved_crc = crc;
+  _m->diag.save_ms.add(millis() - t0, millis());
+  _m->diag.saves++;
+  _m->diag.save_bytes = n;
 }
 
 // ---------------------------------------------------------------- main loop
@@ -199,6 +203,8 @@ void UITask::refreshUi() {
 void UITask::loop() {
   if (!_ui_ready) return;
   unsigned long now = millis();
+  if (_last_loop_ms) _m->diag.noteLoop(now - _last_loop_ms, now);
+  _last_loop_ms = now;
   _uptime_ms += (unsigned long)(now - _last_millis);
   _last_millis = now;
   _m->uptime_s = (uint32_t)(_uptime_ms / 1000);
@@ -211,6 +217,7 @@ void UITask::loop() {
     _next_clock_ms = now + 1000;
     updateClock();
     maybeAdvert();
+    updateDiagnostics();
   }
   if ((long)(now - _next_sync_ms) >= 0) {
     _next_sync_ms = now + SYNC_MS;
@@ -224,7 +231,9 @@ void UITask::loop() {
 
   _ui.tick(now);
   applyBrightness();
-  if (_display) lv_timer_handler();
+  unsigned long t0 = millis();
+  lv_timer_handler();
+  _m->diag.render_ms.add(millis() - t0, millis());
 
   if (_save_due_ms && (long)(now - _save_due_ms) >= 0) {
     _save_due_ms = 0;
@@ -287,6 +296,27 @@ void UITask::updateClock() {
     refreshUi();   // the clock on the home screen
   }
   _last_minute = _m->minute;
+}
+
+// ---------------------------------------------------------------- diagnostics
+
+void UITask::updateDiagnostics() {
+  Diagnostics& d = _m->diag;
+  d.heap_free = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+  d.heap_min = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL);
+  d.heap_largest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
+  d.psram_free = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+  d.rx = radio_driver.getPacketsRecv();
+  d.rx_errors = radio_driver.getPacketsRecvErrors();
+  d.tx = radio_driver.getPacketsSent();
+#ifdef HOMEMESH_DIAG_LOG
+  if ((long)(millis() - _next_diag_log_ms) >= 0) {
+    _next_diag_log_ms = millis() + 60000;
+    char line[TEXT_LEN];
+    d.format(line, sizeof(line));
+    Serial.printf("[HomeMesh] %s\n", line);
+  }
+#endif
 }
 
 // ---------------------------------------------------------------- radio status
