@@ -113,18 +113,53 @@ void UITask::initLvgl() {
   if (!buf) buf = heap_caps_aligned_alloc(LV_DRAW_BUF_ALIGN, buf_bytes, MALLOC_CAP_SPIRAM);
   lv_display_set_buffers(disp, buf, nullptr, buf_bytes, LV_DISPLAY_RENDER_MODE_PARTIAL);
   lv_display_set_flush_cb(disp, lvFlush);
+  lv_display_set_rotation(disp, LV_DISPLAY_ROTATION_180);   // see lvFlush
+  lv_display_add_event_cb(disp, lvRenderEvent, LV_EVENT_RENDER_START, nullptr);
+  lv_display_add_event_cb(disp, lvRenderEvent, LV_EVENT_RENDER_READY, nullptr);
 
   lv_indev_t* touch = lv_indev_create();
   lv_indev_set_type(touch, LV_INDEV_TYPE_POINTER);
   lv_indev_set_read_cb(touch, lvTouch);
 }
 
+// The panel's frame buffer holds big-endian RGB565, turned by 180 degrees
+// against the picture. One pass over the block in fast internal RAM does
+// both: reversing the pixel order turns a block by 180 degrees, and each
+// pixel gets its bytes swapped. LovyanGFX can then copy whole rows (its
+// per-pixel path for rotated or converted pixels was the slow part).
+// frame timing for the diagnostics
+static uint32_t s_frame_start = 0, s_flush_sum = 0;
+
+void UITask::lvRenderEvent(lv_event_t* e) {
+  if (lv_event_get_code(e) == LV_EVENT_RENDER_START) {
+    s_frame_start = millis();
+    s_flush_sum = 0;
+  } else if (s_task && s_task->_m) {
+    s_task->_m->diag.noteFrame(millis() - s_frame_start, s_flush_sum, millis());
+  }
+}
+
 void UITask::lvFlush(lv_display_t* disp, const lv_area_t* area, uint8_t* px) {
+  uint32_t t0 = millis();
   int32_t w = lv_area_get_width(area), h = lv_area_get_height(area);
+  uint16_t* p = (uint16_t*)px;
+  size_t n = (size_t)w * (size_t)h;
+  for (size_t i = 0, j = n - 1; i < j; i++, j--) {
+    uint16_t a = p[i], b = p[j];
+    p[i] = (uint16_t)((b >> 8) | (b << 8));
+    p[j] = (uint16_t)((a >> 8) | (a << 8));
+  }
+  if (n & 1) {
+    uint16_t m = p[n / 2];
+    p[n / 2] = (uint16_t)((m >> 8) | (m << 8));
+  }
+  int32_t hor = lv_display_get_physical_horizontal_resolution(disp);
+  int32_t ver = lv_display_get_physical_vertical_resolution(disp);
   LGFX_Device* dev = display.device();
   dev->startWrite();
-  dev->pushImage(area->x1, area->y1, w, h, (const lgfx::rgb565_t*)px);
+  dev->pushImage(hor - 1 - area->x2, ver - 1 - area->y2, w, h, (const lgfx::swap565_t*)p);
   dev->endWrite();
+  s_flush_sum += millis() - t0;
   lv_display_flush_ready(disp);
 }
 
@@ -304,7 +339,12 @@ void UITask::updateClock() {
     _m->night = night;
     refreshUi();
   } else if (valid && _m->minute != _last_minute && _ui.view() == View::Home) {
-    refreshUi();   // the clock on the home screen
+    // the clock on the home screen: just the digits, unless something else
+    // shown there changed with the time (date, next appointment, warning)
+    uint32_t sig = (uint32_t)_m->date.day | ((uint32_t)(_m->nextAppointment() + 1) << 8) |
+                   (_m->warning[0] ? 1u << 16 : 0) | (_m->pin[0] ? 1u << 17 : 0);
+    if (sig != _home_sig || !_ui.updateClockText()) refreshUi();
+    _home_sig = sig;
   }
   _last_minute = _m->minute;
 }
@@ -341,8 +381,8 @@ void UITask::updateSignal() {
     _m->heard_any = true;
     _m->last_snr = snr;
     _m->last_packet_at_s = _m->uptime_s;
-    if ((_ui.view() == View::Placement || _ui.view() == View::Technical) &&
-        (long)(millis() - _next_signal_refresh_ms) >= 0) {
+    // only the placement helper is live; the technical page shows a snapshot
+    if (_ui.view() == View::Placement && (long)(millis() - _next_signal_refresh_ms) >= 0) {
       _next_signal_refresh_ms = millis() + 1000;
       refreshUi();
     }
@@ -351,7 +391,7 @@ void UITask::updateSignal() {
   _m->signal_level = level;
   if (level != _last_level) {
     _last_level = level;
-    refreshUi();
+    if (_ui.view() == View::Home || _ui.view() == View::Placement) refreshUi();   // the bars are shown there
   }
 }
 

@@ -119,6 +119,7 @@ private:
   uint32_t _last_utc = 0;
   uint32_t _next_advert_s = 60;
   int _last_minute = -1;
+  uint32_t _home_sig = 0;
   uint8_t _last_level = 0xFF;
   bool _last_night = false;
   bool _swallow_touch = false;
@@ -155,4 +156,5 @@ private:
 
   static void lvFlush(lv_display_t* disp, const lv_area_t* area, uint8_t* px);
   static void lvTouch(lv_indev_t* indev, lv_indev_data_t* data);
+  static void lvRenderEvent(lv_event_t* e);
 };

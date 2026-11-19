@@ -212,9 +212,14 @@ static void titleBar(lv_obj_t* parent, const char* title, Action back_action = A
   label(r, title, F.button, T.text);
 }
 
+// The first scroll area of a screen. When the same screen is rebuilt (new
+// message, new data) it keeps its scroll position.
+static lv_obj_t* s_scroll_area = nullptr;
+
 // A scrolling column that fills the remaining height
 static lv_obj_t* scrollArea(lv_obj_t* parent, int gap) {
   lv_obj_t* s = column(parent, gap);
+  if (!s_scroll_area) s_scroll_area = s;
   lv_obj_set_height(s, 1);
   grow(s);
   lv_obj_add_flag(s, LV_OBJ_FLAG_SCROLLABLE);
@@ -376,11 +381,25 @@ void HomeMeshUI::buildAsync(void* self) {
 }
 
 void HomeMeshUI::buildNow() {
+  uint32_t t_build = lv_tick_get();
   // keep typed text when the compose screen is redrawn (e.g. a message arrives)
   if (_view == View::Compose && _textarea) copyText(_draft, sizeof(_draft), lv_textarea_get_text(_textarea));
   selectStyle(*_m);
   resolveSelection();
   _textarea = nullptr;
+
+  // remember where the user scrolled to, if the same screen is rebuilt
+  bool same_view = _built_view == _view && s_scroll_area != nullptr;
+  int32_t keep_y = 0;
+  bool was_at_end = true;
+  if (same_view) {
+    keep_y = lv_obj_get_scroll_y(s_scroll_area);
+    was_at_end = lv_obj_get_scroll_bottom(s_scroll_area) <= 4;
+  }
+  s_scroll_area = nullptr;
+  _clock_label = nullptr;
+  _built_view = _view;
+
   lv_obj_t* old = lv_screen_active();
   lv_obj_t* scr = lv_obj_create(nullptr);
   lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
@@ -404,12 +423,17 @@ void HomeMeshUI::buildNow() {
   }
   lv_screen_load(scr);
   if (old) lv_obj_delete(old);
-  if (s_scroll_to_end) {
+  if (s_scroll_to_end && (!same_view || was_at_end || s_scroll_to_end != s_scroll_area)) {
+    // lists open at the newest entry, and follow it while the user is there
     lv_obj_update_layout(scr);
     int32_t below = lv_obj_get_scroll_bottom(s_scroll_to_end);
     if (below > 0) lv_obj_scroll_by(s_scroll_to_end, 0, -below, LV_ANIM_OFF);
-    s_scroll_to_end = nullptr;
+  } else if (same_view && s_scroll_area && keep_y > 0) {
+    lv_obj_update_layout(scr);
+    lv_obj_scroll_to_y(s_scroll_area, keep_y, LV_ANIM_OFF);
   }
+  s_scroll_to_end = nullptr;
+  _m->diag.build_ms.add(lv_tick_elaps(t_build), lv_tick_get());
 }
 
 // ---------------------------------------------------------------- screens
@@ -445,7 +469,7 @@ void HomeMeshUI::buildHome(lv_obj_t* scr) {
   char clock[8];
   if (_m->time_valid) snprintf(clock, sizeof(clock), "%02d:%02d", _m->hour, _m->minute);
   else snprintf(clock, sizeof(clock), "--:--");
-  label(clock_area, clock, clock_font, T.text);
+  _clock_label = label(clock_area, clock, clock_font, T.text);
 
   if (_m->warning[0]) strip(p, LV_SYMBOL_WARNING, _m->warning, T.warn, T.warn_bg, false, A_DISMISS_WARNING);
   if (_m->pin[0]) strip(p, HM_SYM_PIN, _m->pin, T.text, T.surface, false);
@@ -494,6 +518,17 @@ void HomeMeshUI::buildHome(lv_obj_t* scr) {
   lv_obj_set_height(ch, 54);
 }
 
+// New minute: only the digits change, the screen is not rebuilt (less
+// drawing, less load on the display's frame buffer).
+bool HomeMeshUI::updateClockText() {
+  if (!_clock_label || _view != View::Home) return false;
+  char clock[8];
+  if (_m->time_valid) snprintf(clock, sizeof(clock), "%02d:%02d", _m->hour, _m->minute);
+  else snprintf(clock, sizeof(clock), "--:--");
+  lv_label_set_text(_clock_label, clock);
+  return true;
+}
+
 void HomeMeshUI::buildNightClock(lv_obj_t* scr) {
   lv_obj_set_style_bg_color(scr, T.bg, 0);
   lv_obj_t* p = column(scr, 8);
@@ -505,7 +540,7 @@ void HomeMeshUI::buildNightClock(lv_obj_t* scr) {
   char clock[8];
   if (_m->time_valid) snprintf(clock, sizeof(clock), "%02d:%02d", _m->hour, _m->minute);
   else snprintf(clock, sizeof(clock), "--:--");
-  label(p, clock, &hm_clock_130, T.muted);
+  _clock_label = label(p, clock, &hm_clock_130, T.muted);
 
   int favs[MAX_FAVOURITES];
   int nf = _m->favourites(favs);
@@ -1059,8 +1094,12 @@ void HomeMeshUI::buildTechnical(lv_obj_t* scr) {
   settingsRow(list, "Schleife (max)", v, dg.loop_ms.recent() > DIAG_SLOW_LOOP_MS ? T.warn : T.muted);
   snprintf(v, sizeof(v), "%lu", (unsigned long)dg.slow_loops);
   settingsRow(list, "Schleife > 100 ms", v, T.muted);
-  snprintf(v, sizeof(v), "%lu ms", (unsigned long)dg.render_ms.recent());
-  settingsRow(list, "Zeichnen (max)", v, T.muted);
+  snprintf(v, sizeof(v), "%lu / %lu ms", (unsigned long)dg.frame_ms.recent(), (unsigned long)dg.frameAvg());
+  settingsRow(list, "Bild (max / \xC3\x98)", v, T.muted);
+  snprintf(v, sizeof(v), "%lu ms", (unsigned long)dg.flush_ms.recent());
+  settingsRow(list, "davon Übertragung", v, T.muted);
+  snprintf(v, sizeof(v), "%lu ms", (unsigned long)dg.build_ms.recent());
+  settingsRow(list, "Neuaufbau (max)", v, T.muted);
   snprintf(v, sizeof(v), "%lu ms, %lux, %lu B", (unsigned long)dg.save_ms.all, (unsigned long)dg.saves, (unsigned long)dg.save_bytes);
   settingsRow(list, "Speichern (max)", v, T.muted);
   snprintf(v, sizeof(v), "%lu KB, min %lu, Block %lu", (unsigned long)(dg.heap_free / 1024),

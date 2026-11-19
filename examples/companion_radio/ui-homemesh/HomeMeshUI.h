@@ -82,6 +82,7 @@ public:
   void onTouch(uint32_t now_ms) { _last_touch_ms = now_ms; _idle = false; }
 
   bool screenOff() const { return _screen_off; }
+  bool updateClockText();   // false: the screen needs a rebuild
   void sound(Sound s) { if (_m->soundAllowed(s)) _act->playSound(s); }
 
   // A full-screen message notice that nobody looked at for 10 minutes is
@@ -102,6 +103,8 @@ private:
   Model* _m = nullptr;
   UiActions* _act = nullptr;
   View _view = View::Home;
+  View _built_view = View::Home;   // screen currently on display
+  lv_obj_t* _clock_label = nullptr;
   View _back[6];
   int _back_n = 0;
 

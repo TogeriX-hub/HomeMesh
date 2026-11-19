@@ -44,10 +44,14 @@ public:
 
   LGFX_Device* device() { return display; }
 
-  // Frees the sprite of the stock text UI and prepares 16-bit pushes.
+  // Frees the sprite of the stock text UI and prepares fast 16-bit pushes.
+  // Rotation 3 cancels the panel's offset_rotation (1), so LovyanGFX copies
+  // whole rows into its frame buffer instead of converting pixel by pixel;
+  // LVGL turns the picture by 180 degrees itself (see UITask::lvFlush).
   void startLvgl() {
     buffer.deleteSprite();
     display->setColorDepth(16);
+    display->setRotation(3);
   }
 
   void setBacklight(uint8_t percent) {

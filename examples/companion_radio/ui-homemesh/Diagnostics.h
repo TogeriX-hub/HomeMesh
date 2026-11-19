@@ -37,7 +37,11 @@ struct PeakWindow {
 
 struct Diagnostics {
   PeakWindow loop_ms;     // time between two UI loop calls (whole Arduino loop)
-  PeakWindow render_ms;   // lv_timer_handler()
+  PeakWindow render_ms;   // lv_timer_handler() as a whole
+  PeakWindow frame_ms;    // drawing one picture (render + flush)
+  PeakWindow flush_ms;    // of that: copying into the panel's frame buffer
+  PeakWindow build_ms;    // building a screen from the model
+  uint32_t frame_avg_x8;  // running average of frame_ms, times 8
   PeakWindow save_ms;     // writing the state file
   uint32_t slow_loops;
   uint32_t saves;
@@ -50,6 +54,13 @@ struct Diagnostics {
 
   uint32_t rx, rx_errors, tx;
 
+  void noteFrame(uint32_t ms, uint32_t flush, uint32_t now_ms) {
+    frame_ms.add(ms, now_ms);
+    flush_ms.add(flush, now_ms);
+    frame_avg_x8 = frame_avg_x8 ? frame_avg_x8 - frame_avg_x8 / 8 + ms : ms * 8;
+  }
+  uint32_t frameAvg() const { return (frame_avg_x8 + 4) / 8; }
+
   void noteLoop(uint32_t gap_ms, uint32_t now_ms) {
     loop_ms.add(gap_ms, now_ms);
     if (gap_ms > DIAG_SLOW_LOOP_MS) slow_loops++;
@@ -58,10 +69,11 @@ struct Diagnostics {
   // One line for !diag and the serial log (fits a mesh message).
   int format(char* out, size_t cap) const {
     return snprintf(out, cap,
-                    "Loop %lu/%lums %lux>%lu | Draw %lu | Save %lums %lux %luB | RAM %luK min%lu blk%lu | "
-                    "PSRAM %luK | RX %lu/%lu TX %lu",
+                    "Loop %lu/%lums %lux>%lu | Frm %lu/%lu/%lu Bld %lu | Save %lums %lux %luB | RAM %luK min%lu blk%lu | "
+                    "PS %luK | RX %lu/%lu TX %lu",
                     (unsigned long)loop_ms.recent(), (unsigned long)loop_ms.all, (unsigned long)slow_loops,
-                    (unsigned long)DIAG_SLOW_LOOP_MS, (unsigned long)render_ms.recent(), (unsigned long)save_ms.all,
+                    (unsigned long)DIAG_SLOW_LOOP_MS, (unsigned long)frame_ms.recent(), (unsigned long)frameAvg(),
+                    (unsigned long)flush_ms.recent(), (unsigned long)build_ms.recent(), (unsigned long)save_ms.all,
                     (unsigned long)saves, (unsigned long)save_bytes, (unsigned long)(heap_free / 1024),
                     (unsigned long)(heap_min / 1024), (unsigned long)(heap_largest / 1024),
                     (unsigned long)(psram_free / 1024), (unsigned long)rx, (unsigned long)rx_errors, (unsigned long)tx);
