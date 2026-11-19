@@ -42,6 +42,15 @@ inline void copyText(char* dst, size_t cap, const char* src) {
   dst[n] = 0;
 }
 
+// Text limits are in bytes (umlauts take two). MeshCore sends at most 160
+// bytes per message; a channel message also carries "<sender>: " in front.
+static const int MESH_TEXT_MAX = TEXT_LEN - 1;
+
+inline int channelTextBudget(const char* sender) {
+  int b = MESH_TEXT_MAX - (int)strlen(sender) - 2;
+  return b > 0 ? b : 0;
+}
+
 // Fixed-size message history; the oldest message drops out when full.
 struct MessageLog {
   Message msgs[MAX_LOG_MESSAGES];
@@ -238,13 +247,16 @@ struct Model {
     repeaters[i].heard_at_s = now_s;
   }
 
+  // Without a valid clock the warning is stamped once the time is known.
   void setWarning(const char* text) {
     copyText(warning, sizeof(warning), text);
-    warning_at = nowUnix();
+    warning_at = time_valid ? nowUnix() : 0;
   }
 
   void expireWarning() {
-    if (warning[0] && time_valid && nowUnix() - warning_at >= WARNING_SHOW_S) warning[0] = 0;
+    if (!warning[0] || !time_valid) return;
+    if (warning_at == 0) warning_at = nowUnix();
+    else if (nowUnix() - warning_at >= WARNING_SHOW_S) warning[0] = 0;
   }
 
   // favourites in contact-list order, up to MAX_FAVOURITES
@@ -328,6 +340,7 @@ struct Model {
 
   // Appointment whose reminder is due now (5 minutes before the start), marked as reminded.
   int takeDueReminder() {
+    if (!time_valid) return -1;   // the date is unknown until the clock is set
     int64_t now = nowMinutes();
     for (int i = 0; i < appt_count; i++) {
       int64_t st = appointmentStart(appts[i], now);

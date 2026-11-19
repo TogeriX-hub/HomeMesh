@@ -261,3 +261,30 @@ TEST(HomeMeshModel, SoundRules) {
   EXPECT_FALSE(m->soundAllowed(Sound::Reminder));
   EXPECT_FALSE(m->soundAllowed(Sound::Ring));
 }
+
+TEST(HomeMeshModel, NoClockNoRemindersAndLateWarningStamp) {
+  auto m = freshModel();
+  Appointment a = {};
+  a.status = ApptStatus::Ok;
+  a.daily = true;
+  a.hour = 0; a.minute = 3;
+  strcpy(a.name, "Tabletten");
+  m->appts[m->appt_count++] = a;
+  EXPECT_EQ(-1, m->takeDueReminder());   // clock unknown: date {0,0,0}
+
+  m->setWarning("DWD · Sturm");
+  EXPECT_EQ(0u, m->warning_at);
+  m->expireWarning();                    // still no clock: kept, not stamped
+  EXPECT_STREQ("DWD · Sturm", m->warning);
+  m->time_valid = true;
+  m->date = { 2026, 11, 19 };
+  m->hour = 14; m->minute = 0;
+  m->expireWarning();                    // clock known: stamped now
+  EXPECT_EQ(m->nowUnix(), m->warning_at);
+  m->hour = 19; m->minute = 59;
+  m->expireWarning();
+  EXPECT_STREQ("DWD · Sturm", m->warning);
+  m->hour = 20; m->minute = 0;
+  m->expireWarning();
+  EXPECT_EQ(0, m->warning[0]);
+}

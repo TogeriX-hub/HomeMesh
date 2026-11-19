@@ -158,6 +158,22 @@ int main(int argc, char** argv) {
   click("Nachrichten");
   shot(out, "07_messages");
 
+  // the open chat must stay with its contact when the list is reordered
+  click("Nachbar Node");
+  {
+    Conversation tmp = model.convs[0];
+    model.convs[0] = model.convs[1];
+    model.convs[1] = tmp;
+    ui.refresh();
+    settle();
+    bool ok = findByText(lv_screen_active(), "Nachbar Node") != nullptr;
+    printf("chat after reorder: %s\n", ok ? "OK (same contact)" : "WRONG CONTACT");
+    shot(out, "07b_chat_after_reorder");
+    tmp = model.convs[0];
+    model.convs[0] = model.convs[1];
+    model.convs[1] = tmp;
+  }
+
   ui.show(View::Home);
   click("Kanäle");
   shot(out, "08_channels");

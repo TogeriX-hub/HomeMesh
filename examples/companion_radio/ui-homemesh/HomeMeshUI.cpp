@@ -379,6 +379,7 @@ void HomeMeshUI::buildNow() {
   // keep typed text when the compose screen is redrawn (e.g. a message arrives)
   if (_view == View::Compose && _textarea) copyText(_draft, sizeof(_draft), lv_textarea_get_text(_textarea));
   selectStyle(*_m);
+  resolveSelection();
   _textarea = nullptr;
   lv_obj_t* old = lv_screen_active();
   lv_obj_t* scr = lv_obj_create(nullptr);
@@ -527,7 +528,7 @@ void HomeMeshUI::buildNewMessages(lv_obj_t* scr) {
     if (_m->convs[favs[i]].log.unread) { conv = favs[i]; unread = _m->convs[conv].log.unread; break; }
   }
   if (conv < 0) { _view = View::Home; buildHome(scr); return; }
-  _chat_conv = conv;
+  selectConv(conv);
   const Conversation& cv = _m->convs[conv];
 
   char head[64];
@@ -745,6 +746,15 @@ static const lv_buttonmatrix_ctrl_t KB_CTRL_SPECIAL[] = {
   KB_CTRL(5), KB_W(3), KB_W(3), KB_W(3), KB_W(3), KB_W(3), KB_W(3), KB_W(3), KB_W(5),
   KB_CTRL(5), KB_W(3), KB_W(14), KB_W(3), KB_W(3), KB_CTRL(5) };
 
+static int s_compose_limit = TEXT_LEN - 1;   // bytes
+
+static void onTextInsert(lv_event_t* e) {
+  lv_obj_t* ta = (lv_obj_t*)lv_event_get_target(e);
+  const char* ins = (const char*)lv_event_get_param(e);
+  if (!ins) return;
+  if ((int)(strlen(lv_textarea_get_text(ta)) + strlen(ins)) > s_compose_limit) lv_textarea_set_insert_replace(ta, "");
+}
+
 void HomeMeshUI::buildCompose(lv_obj_t* scr) {
   lv_obj_t* p = page(scr);
   lv_obj_set_style_pad_all(p, 12, 0);
@@ -774,6 +784,14 @@ void HomeMeshUI::buildCompose(lv_obj_t* scr) {
   grow(_textarea);
   lv_obj_set_height(_textarea, LV_SIZE_CONTENT);
   lv_textarea_set_max_length(_textarea, TEXT_LEN - 1);
+  // the limit that matters is in bytes: refuse input that would not fit
+  switch (_compose_mode) {
+    case ComposeMode::Direct: s_compose_limit = MESH_TEXT_MAX; break;
+    case ComposeMode::Channel: s_compose_limit = channelTextBudget(_m->node_name); break;
+    case ComposeMode::Alias: s_compose_limit = NAME_LEN - 1; break;
+    case ComposeMode::WifiPassword: s_compose_limit = (int)sizeof(_m->wifi_pwd) - 1; break;
+  }
+  lv_obj_add_event_cb(_textarea, onTextInsert, LV_EVENT_INSERT, nullptr);
   lv_textarea_set_placeholder_text(_textarea, placeholder);
   lv_textarea_set_text(_textarea, _draft);
   lv_obj_set_style_text_font(_textarea, F.body, 0);
@@ -1212,8 +1230,45 @@ static void markRead(Model* m, int conv) {
   m->convs[conv].log.markRead();
 }
 
-void HomeMeshUI::openChat(int conv) {
+void HomeMeshUI::selectConv(int conv) {
   _chat_conv = conv;
+  if (conv >= 0 && conv < _m->conv_count) memcpy(_chat_key, _m->convs[conv].pubkey_prefix, 6);
+}
+
+void HomeMeshUI::selectComposeChannel(int ch) {
+  _compose_channel = ch;
+  if (ch >= 0 && ch < _m->channel_count) copyText(_compose_channel_key, sizeof(_compose_channel_key), _m->channels[ch].name);
+}
+
+void HomeMeshUI::selectChannel(int ch) {
+  _channel = ch;
+  if (ch >= 0 && ch < _m->channel_count) copyText(_channel_key, sizeof(_channel_key), _m->channels[ch].name);
+}
+
+// Finds the selected conversation and channels again by key. If a screen
+// shows something that no longer exists, it goes back to the home screen.
+bool HomeMeshUI::resolveSelection() {
+  int c = _m->findConversation(_chat_key);
+  if (c >= 0) _chat_conv = c;
+  int cc = _m->findChannel(_compose_channel_key);
+  if (cc >= 0) _compose_channel = cc;
+  int ch = _m->findChannel(_channel_key);
+  _channel = ch >= 0 ? ch : 0;
+
+  bool needs_conv = _view == View::Chat ||
+                    (_view == View::Compose && (_compose_mode == ComposeMode::Direct || _compose_mode == ComposeMode::Alias));
+  bool needs_channel = _view == View::Compose && _compose_mode == ComposeMode::Channel;
+  if ((needs_conv && c < 0) || (needs_channel && cc < 0)) {
+    _view = View::Home;
+    _back_n = 0;
+    _draft[0] = 0;
+    return false;
+  }
+  return true;
+}
+
+void HomeMeshUI::openChat(int conv) {
+  selectConv(conv);
   markRead(_m, conv);
   go(View::Chat);
 }
@@ -1221,10 +1276,10 @@ void HomeMeshUI::openChat(int conv) {
 void HomeMeshUI::openCompose(ComposeMode mode, int arg) {
   _compose_mode = mode;
   _draft[0] = 0;
-  if (mode == ComposeMode::Direct) _chat_conv = arg;
-  if (mode == ComposeMode::Channel) _compose_channel = arg;
+  if (mode == ComposeMode::Direct) selectConv(arg);
+  if (mode == ComposeMode::Channel) selectComposeChannel(arg);
   if (mode == ComposeMode::Alias) {
-    _chat_conv = arg;
+    selectConv(arg);
     copyText(_draft, sizeof(_draft), _m->convs[arg].alias);
   }
   if (mode == ComposeMode::WifiPassword) copyText(_wifi_ssid, sizeof(_wifi_ssid), _m->networks[arg].ssid);
@@ -1233,7 +1288,7 @@ void HomeMeshUI::openCompose(ComposeMode mode, int arg) {
 
 void HomeMeshUI::openChannel(int ch) {
   if (ch >= _m->channel_count) ch = 0;
-  _channel = ch;
+  selectChannel(ch);
   if (_m->channel_count) {
     MessageLog& log = _m->channels[ch].log;
     _channel_divider = log.seen < log.count ? log.seen : -1;
@@ -1243,6 +1298,7 @@ void HomeMeshUI::openChannel(int ch) {
 
 void HomeMeshUI::sendDraft() {
   if (_textarea) copyText(_draft, sizeof(_draft), lv_textarea_get_text(_textarea));
+  if (!resolveSelection()) { build(); return; }   // recipient is gone: nothing is sent
   switch (_compose_mode) {
     case ComposeMode::Direct:
       if (!_draft[0]) return;
@@ -1281,7 +1337,7 @@ void HomeMeshUI::onClick(lv_event_t* e) {
     case A_REPLY:
       markRead(ui->_m, arg);
       // after sending, "back" leads to the conversation
-      if (ui->_view != View::Chat) { ui->_back_n = 0; ui->_view = View::Chat; ui->_chat_conv = arg; }
+      if (ui->_view != View::Chat) { ui->_back_n = 0; ui->_view = View::Chat; ui->selectConv(arg); }
       ui->openCompose(ComposeMode::Direct, arg);
       break;
     case A_COMPOSE_CHANNEL: ui->openCompose(ComposeMode::Channel, arg); break;

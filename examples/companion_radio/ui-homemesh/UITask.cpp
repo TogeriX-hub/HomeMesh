@@ -23,7 +23,7 @@ using namespace homemesh;
 static const char STATE_FILE[] = "/hm_state.bin";
 static const char STATE_TMP[] = "/hm_state.tmp";
 
-static const unsigned long SAVE_CHECK_MS = 15000;       // look for changes to save
+static const unsigned long SAVE_CHECK_MS = 30000;       // look for changes to save (each write briefly disturbs the display)
 static const unsigned long SYNC_MS = 30000;              // re-read contacts and channels
 static const unsigned long ACK_MARGIN_MS = 3000;         // on top of MeshCore's estimate
 static const unsigned long APP_ACK_TIMEOUT_MS = 30000;   // app sends: no estimate from the hook
@@ -103,6 +103,10 @@ void UITask::initLvgl() {
   // Draw buffer in PSRAM: internal RAM is needed by Bluetooth and Wi-Fi.
   size_t buf_bytes = (size_t)display.device()->width() * LV_BUF_LINES * 2;
   void* buf = heap_caps_aligned_alloc(LV_DRAW_BUF_ALIGN, buf_bytes, MALLOC_CAP_SPIRAM);
+  if (!buf) {   // fewer lines still work
+    buf_bytes /= 4;
+    buf = heap_caps_aligned_alloc(LV_DRAW_BUF_ALIGN, buf_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_INTERNAL);
+  }
   lv_display_set_buffers(disp, buf, nullptr, buf_bytes, LV_DISPLAY_RENDER_MODE_PARTIAL);
   lv_display_set_flush_cb(disp, lvFlush);
 
@@ -243,7 +247,10 @@ void UITask::loop() {
     saveState(false);
   }
 
-  if (_reboot_at_ms && (long)(now - _reboot_at_ms) >= 0 && !_reply.active) {
+  // Restart once the reply and its ACK are out and MeshCore has saved the
+  // contacts - or after 15 s at the latest.
+  if (_reboot_at_ms && (long)(now - _reboot_at_ms) >= 0 && !_reply.active &&
+      (!the_mesh.hasPendingWork() || (long)(now - _reboot_deadline_ms) >= 0)) {
     saveState(true);
     _board->reboot();
   }
@@ -408,19 +415,43 @@ void UITask::syncChannels() {
 
 // ---------------------------------------------------------------- incoming
 
-bool UITask::interceptMessage(const ContactInfo& from, uint8_t txt_type, const char* text) {
+bool UITask::alreadySeen(const ContactInfo& from, uint32_t sender_timestamp, const char* text) {
+  uint32_t crc = crc32((const uint8_t*)text, strlen(text));
+  for (int i = 0; i < SEEN_SIZE; i++) {
+    const SeenMsg& s = _seen[i];
+    if (s.timestamp == sender_timestamp && s.text_crc == crc && memcmp(s.prefix, from.id.pub_key, 6) == 0) return true;
+  }
+  SeenMsg& s = _seen[_seen_next];
+  _seen_next = (uint8_t)((_seen_next + 1) % SEEN_SIZE);
+  memcpy(s.prefix, from.id.pub_key, 6);
+  s.timestamp = sender_timestamp;
+  s.text_crc = crc;
+  return false;
+}
+
+bool UITask::interceptMessage(const ContactInfo& from, uint8_t txt_type, uint32_t sender_timestamp, const char* text) {
   if (!_ui_ready || txt_type != TXT_TYPE_PLAIN || !from.isFav() || !isRemoteCommand(text)) return false;
+
+  if (alreadySeen(from, sender_timestamp, text)) {
+    // the sender missed our ACK and repeats the command: answer again, do not run it twice
+    if (memcmp(_last_reply.prefix, from.id.pub_key, 6) == 0 && _last_reply.text[0]) {
+      _reply = _last_reply;
+      _reply.active = true;
+    }
+    return true;
+  }
 
   CommandResult r;
   handleRemoteCommand(*_m, text, r);
   memcpy(_reply.prefix, from.id.pub_key, 6);
   copyText(_reply.text, sizeof(_reply.text), r.reply);
   _reply.active = true;
+  _last_reply = _reply;
 
   if (r.advert && the_mesh.advert()) _m->last_advert_at_s = _m->uptime_s;
   if (r.ring) _ui.onRing();
   if (r.update) startUpdate();
-  if (r.reboot) _reboot_at_ms = millis() + 3000;
+  if (r.reboot) requestReboot(3000);
   if (!_m->sound_on) stopSound();
   _m->night = _m->inQuietHours();
   _last_night = _m->night;
@@ -432,9 +463,12 @@ bool UITask::interceptMessage(const ContactInfo& from, uint8_t txt_type, const c
 void UITask::onMessageRecv(mesh::Packet* pkt, const ContactInfo& from, uint8_t txt_type, uint32_t sender_timestamp, const char* text) {
   (void)pkt;
   if (!_ui_ready || (txt_type != TXT_TYPE_PLAIN && txt_type != TXT_TYPE_SIGNED_PLAIN)) return;
+  if (alreadySeen(from, sender_timestamp, text)) return;   // repeat after a lost ACK
 
-  // Fallback clock: take the sender's time while ours is not set.
-  if (!_clock_set && isValidClock(sender_timestamp)) {
+  // Fallback clock: take the sender's time while ours is not set. Only from
+  // favourites, and not the start date of an ESP32 node whose clock was
+  // never set: a wrong clock could not be turned back by the app later.
+  if (!_clock_set && from.isFav() && sender_timestamp > (uint32_t)RTC_TIME_MIN + 86400) {
     rtc_clock.setCurrentTime(sender_timestamp);
     _clock_set = true;
     _last_utc = sender_timestamp;
@@ -538,8 +572,12 @@ void UITask::retryDirect(int conv, int msg_index) {
   refreshUi();
 }
 
-void UITask::sendChannel(int channel, const char* text) {
-  if (channel < 0 || channel >= _m->channel_count || !text[0]) return;
+void UITask::sendChannel(int channel, const char* text_in) {
+  if (channel < 0 || channel >= _m->channel_count || !text_in[0]) return;
+  // MeshCore would cut longer text in the middle of a character; cut it here
+  // at a character boundary, so the log shows what was really sent
+  char text[TEXT_LEN];
+  copyText(text, channelTextBudget(_prefs->node_name) + 1, text_in);
   ChannelDetails cd;
   Message& m = _m->channels[channel].log.add(nowLocal(), true, text, _prefs->node_name);
   if (the_mesh.getChannel(_channel_idx[channel], cd) &&
@@ -570,6 +608,12 @@ void UITask::checkAckTimeouts() {
     PendingAck& p = _pending[i];
     if (!p.active || (long)(millis() - p.deadline) < 0) continue;
     p.active = false;
+    bool other_attempt = false;   // the app's next attempt for the same message
+    for (int k = 0; k < MAX_PENDING; k++) {
+      const PendingAck& q = _pending[k];
+      if (q.active && q.msg_time == p.msg_time && q.text_crc == p.text_crc && memcmp(q.prefix, p.prefix, 6) == 0) other_attempt = true;
+    }
+    if (other_attempt) continue;
     Message* m = findOutgoing(p, nullptr);
     if (m && m->status == Delivery::Pending) {
       m->status = Delivery::Failed;
@@ -715,5 +759,10 @@ void UITask::startUpdate() {
 
 // There is no way to close the update hotspot again; a restart does it.
 void UITask::stopUpdate() {
-  if (_m->update_running) _reboot_at_ms = millis() + 500;
+  if (_m->update_running) requestReboot(500);
+}
+
+void UITask::requestReboot(unsigned long delay_ms) {
+  _reboot_at_ms = millis() + delay_ms;
+  _reboot_deadline_ms = millis() + 15000;
 }

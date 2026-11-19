@@ -88,8 +88,8 @@ public:
   // dimmed to the night brightness until it is touched or a new one arrives.
   static const uint32_t DIM_AFTER_MS = 10UL * 60 * 1000;
   bool dimmed(uint32_t now_ms) const {
-    uint32_t since = _newmsg_since_ms > _last_touch_ms ? _newmsg_since_ms : _last_touch_ms;
-    return _view == View::NewMessages && now_ms - since > DIM_AFTER_MS;
+    uint32_t a = now_ms - _newmsg_since_ms, b = now_ms - _last_touch_ms;   // wrap-safe
+    return _view == View::NewMessages && (a < b ? a : b) > DIM_AFTER_MS;
   }
 
   // Backlight in percent for the current state.
@@ -112,6 +112,16 @@ private:
   int _reminder_appt = -1;
   int64_t _snooze_until_min = -1;
   int _channel = 0;            // channel shown in Channels
+  // The model lists can be reordered while a screen is open (a quiet
+  // conversation makes room, channels change in the app). The selection is
+  // kept by key and looked up again before every build and send.
+  uint8_t _chat_key[6] = {0};
+  char _compose_channel_key[NAME_LEN] = {0};
+  char _channel_key[NAME_LEN] = {0};
+  void selectConv(int conv);
+  void selectComposeChannel(int ch);
+  void selectChannel(int ch);
+  bool resolveSelection();
   int _channel_divider = -1;   // index where "new since last visit" starts
   char _draft[TEXT_LEN] = {0};
 

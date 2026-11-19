@@ -39,7 +39,7 @@ public:
   void onQueueSizeChanged(int msgcount) override { (void)msgcount; }
   void onDiscoveredContact(ContactInfo& contact, bool is_new, uint8_t path_len, const uint8_t* path) override;
   void onACKRecv(uint32_t ack_crc) override;
-  bool interceptMessage(const ContactInfo& from, uint8_t txt_type, const char* text) override;
+  bool interceptMessage(const ContactInfo& from, uint8_t txt_type, uint32_t sender_timestamp, const char* text) override;
   void onAppMessageSent(const ContactInfo& to, uint8_t attempt, const char* text, uint32_t expected_ack, uint32_t est_timeout) override;
   void onAppChannelMessageSent(uint8_t channel_idx, const char* text, int len) override;
 
@@ -47,7 +47,10 @@ public:
   void sendDirect(int conv, const char* text) override;
   void sendChannel(int channel, const char* text) override;
   void retryDirect(int conv, int msg_index) override;
-  void saveSettings() override { _save_due_ms = millis(); }
+  // Settings are written a few seconds after the last change (sliders and
+  // steppers change several times in a row); each flash write briefly
+  // disturbs the display.
+  void saveSettings() override { _save_due_ms = millis() + SETTINGS_SAVE_DELAY_MS; }
   void wifiConnect(const char* ssid, const char* password) override;
   void wifiForget() override;
   void wifiScan() override;
@@ -60,6 +63,7 @@ public:
 
 private:
   static const int MAX_PENDING = 8;
+  static const unsigned long SETTINGS_SAVE_DELAY_MS = 5000;
 
   // An outgoing direct message waiting for its ACK.
   struct PendingAck {
@@ -86,6 +90,20 @@ private:
   homemesh::SignalMeter _signal;
 
   PendingAck _pending[MAX_PENDING] = {};
+
+  // Recently received direct messages. A sender that misses our ACK sends
+  // the same message again (same timestamp and text); it must not show up
+  // twice or run a remote command twice.
+  static const int SEEN_SIZE = 16;
+  struct SeenMsg {
+    uint8_t prefix[6];
+    uint32_t timestamp;
+    uint32_t text_crc;
+  };
+  SeenMsg _seen[SEEN_SIZE] = {};
+  uint8_t _seen_next = 0;
+  bool alreadySeen(const ContactInfo& from, uint32_t sender_timestamp, const char* text);
+  QueuedReply _last_reply = {};   // answer to the last command, sent again for a repeat
   QueuedReply _reply = {};
   int8_t _channel_idx[homemesh::MAX_CHANNELS] = {};   // model channel -> MeshCore channel index
 
@@ -95,6 +113,7 @@ private:
   unsigned long _next_clock_ms = 0, _next_sync_ms = 0, _next_signal_refresh_ms = 0;
   unsigned long _save_due_ms = 0, _next_save_check_ms = 0;
   unsigned long _reboot_at_ms = 0;
+  unsigned long _reboot_deadline_ms = 0;
   unsigned long _last_loop_ms = 0, _next_diag_log_ms = 0;
   uint32_t _saved_crc = 0;
   uint32_t _last_utc = 0;
@@ -109,6 +128,7 @@ private:
   uint8_t _want_brightness = 0xFF;
 
   void initLvgl();
+  void requestReboot(unsigned long delay_ms);
   void updateDiagnostics();
   void sendToRp2040(uint8_t type, uint32_t para);
   void refreshUi();

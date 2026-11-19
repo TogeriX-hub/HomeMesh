@@ -439,7 +439,7 @@ ContactInfo*  MyMesh::processAck(const uint8_t *data) {
 
 void MyMesh::queueMessage(const ContactInfo &from, uint8_t txt_type, mesh::Packet *pkt,
                           uint32_t sender_timestamp, const uint8_t *extra, int extra_len, const char *text) {
-  if (_listener && _listener->interceptMessage(from, txt_type, text)) return;   // HomeMesh hook
+  if (_listener && _listener->interceptMessage(from, txt_type, sender_timestamp, text)) return;   // HomeMesh hook
   int i = 0;
   if (app_target_ver >= 3) {
     out_frame[i++] = RESP_CODE_CONTACT_MSG_RECV_V3;

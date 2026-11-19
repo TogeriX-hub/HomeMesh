@@ -107,7 +107,7 @@ public:
       virtual void onRawDataRecv(mesh::Packet *pkt) { }
       // HomeMesh hooks: let the UI take a message before it reaches the app queue,
       // and tell it about messages the app sent
-      virtual bool interceptMessage(const ContactInfo &from, uint8_t txt_type, const char* text) { return false; }
+      virtual bool interceptMessage(const ContactInfo &from, uint8_t txt_type, uint32_t sender_timestamp, const char* text) { return false; }
       virtual void onAppMessageSent(const ContactInfo &to, uint8_t attempt, const char* text, uint32_t expected_ack, uint32_t est_timeout) { }
       virtual void onAppChannelMessageSent(uint8_t channel_idx, const char* text, int len) { }
       virtual ~Listener() { }

@@ -145,6 +145,10 @@ inline void handleRemoteCommand(Model& m, const char* text, CommandResult& r) {
       snprintf(r.reply, sizeof(r.reply), "OK · Termin %d gelöscht", n);
       return;
     }
+    if (!m.time_valid) {
+      snprintf(r.reply, sizeof(r.reply), "FEHLER · Uhrzeit am Gerät nicht gestellt");
+      return;
+    }
     Appointment a = parseAppointment(arg, m.date, m.hour, m.minute);
     if (a.status == ApptStatus::Ok && !m.addAppointment(a)) {
       snprintf(r.reply, sizeof(r.reply), "FEHLER · schon %d Termine, erst einen löschen", MAX_APPOINTMENTS);

@@ -135,3 +135,10 @@ TEST(HomeMeshSchedule, NextAppointmentAndReminder) {
   m.date = CivilDate{ 2026, 11, 17 };
   EXPECT_EQ(0, m.takeDueReminder());            // again the next day
 }
+
+TEST(HomeMeshCommands, AppointmentsNeedTheClock) {
+  Model& m = freshModel();
+  m.time_valid = false;
+  EXPECT_EQ("FEHLER · Uhrzeit am Gerät nicht gestellt", run(m, "!termin Arzt morgen 10:00"));
+  EXPECT_EQ(0, m.appt_count);
+}

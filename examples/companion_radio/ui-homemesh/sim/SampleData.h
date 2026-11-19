@@ -41,6 +41,8 @@ inline void sampleData() {
   model.signal_level = 4;
 
   Conversation& fav = model.convs[model.conv_count++];
+  const uint8_t fav_key[6] = { 0xA1, 0x10, 0x20, 0x30, 0x40, 0x50 };
+  memcpy(fav.pubkey_prefix, fav_key, 6);
   strcpy(fav.name, "Juno48 Tracker");
   strcpy(fav.alias, "Max");
   fav.favourite = true;
@@ -53,6 +55,8 @@ inline void sampleData() {
   fav.log.markRead();
 
   Conversation& other = model.convs[model.conv_count++];
+  const uint8_t other_key[6] = { 0xB2, 0x11, 0x21, 0x31, 0x41, 0x51 };
+  memcpy(other.pubkey_prefix, other_key, 6);
   strcpy(other.name, "Nachbar Node");
   other.log.add(at(-1, 9, 5), false, "Hallo, habt ihr auch Empfang?");
 
