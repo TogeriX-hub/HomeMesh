@@ -22,7 +22,9 @@ using namespace homemesh;
 static const char STATE_FILE[] = "/hm_state.bin";
 static const char STATE_TMP[] = "/hm_state.tmp";
 
-static const unsigned long SAVE_CHECK_MS = 30000;       // look for changes to save (each write briefly disturbs the display)
+// Look for changes every 5 s: what happened before a power cut should be
+// kept. Writing only happens when something changed.
+static const unsigned long SAVE_CHECK_MS = 5000;
 static const unsigned long SYNC_MS = 30000;              // re-read contacts and channels
 static const unsigned long ACK_MARGIN_MS = 3000;         // on top of MeshCore's estimate
 static const unsigned long APP_ACK_TIMEOUT_MS = 30000;   // app sends: no estimate from the hook
