@@ -288,3 +288,17 @@ TEST(HomeMeshModel, NoClockNoRemindersAndLateWarningStamp) {
   m->expireWarning();
   EXPECT_EQ(0, m->warning[0]);
 }
+
+TEST(HomeMeshPersist, ChecksumTellsRecordsApart) {
+  // The firmware saves only when this value changes. A CRC over the whole
+  // record (trailer included) is the same constant for every record.
+  auto a = freshModel();
+  fill(*a);
+  auto r1 = save(*a);
+  a->convs[0].log.add(700, false, "Noch eine");
+  auto r2 = save(*a);
+  EXPECT_NE(recordChecksum(r1.data(), r1.size()), recordChecksum(r2.data(), r2.size()));
+  EXPECT_EQ(crc32(r1.data(), r1.size()), crc32(r2.data(), r2.size()));   // the residue: why this was a bug
+  auto r3 = save(*a);
+  EXPECT_EQ(recordChecksum(r2.data(), r2.size()), recordChecksum(r3.data(), r3.size()));
+}

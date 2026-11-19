@@ -138,6 +138,14 @@ inline void readLog(Reader& r, MessageLog& log) {
 
 }  // namespace detail
 
+// The CRC stored at the end of a record identifies its content. (A CRC taken
+// over the whole record including that trailer is the same constant for
+// every record - the CRC-32 residue - and says nothing.)
+inline uint32_t recordChecksum(const uint8_t* buf, size_t len) {
+  if (len < 4) return 0;
+  return (uint32_t)buf[len - 4] | ((uint32_t)buf[len - 3] << 8) | ((uint32_t)buf[len - 2] << 16) | ((uint32_t)buf[len - 1] << 24);
+}
+
 // Returns the record size, or 0 if buf is too small.
 inline size_t serializeState(const Model& m, uint8_t* buf, size_t cap) {
   detail::Writer w{ buf, cap, 0, true };

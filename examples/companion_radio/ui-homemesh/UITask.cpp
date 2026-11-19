@@ -198,18 +198,20 @@ void UITask::loadState() {
     if (!SPIFFS.exists(path)) continue;
     File f = SPIFFS.open(path, "r");
     if (!f) continue;
-    size_t n = f.size();
-    if (n <= PERSIST_MAX_BYTES) n = f.read(s_save_buf, n);
-    else n = 0;
+    size_t size = f.size();
+    size_t n = size <= PERSIST_MAX_BYTES ? f.read(s_save_buf, size) : 0;
     f.close();
-    if (n && deserializeState(*_m, s_save_buf, n)) { ok = true; break; }
+    ok = n && deserializeState(*_m, s_save_buf, n);
+    Serial.printf("[HomeMesh] load %s: size %u, read %u, %s\n", path, (unsigned)size, (unsigned)n, ok ? "ok" : "unreadable");
+    if (ok) break;
   }
+  if (!ok) Serial.println("[HomeMesh] no saved state, defaults");
   if (!ok) {
     _m->applyDefaults();
     _saved_crc = 0;
   } else {
     size_t n = serializeState(*_m, s_save_buf, PERSIST_MAX_BYTES);
-    _saved_crc = crc32(s_save_buf, n);
+    _saved_crc = recordChecksum(s_save_buf, n);
   }
 }
 
@@ -220,17 +222,22 @@ void UITask::saveState(bool force) {
   if (!_m || !s_save_buf) return;
   size_t n = serializeState(*_m, s_save_buf, PERSIST_MAX_BYTES);
   if (n == 0) return;
-  uint32_t crc = crc32(s_save_buf, n);
+  uint32_t crc = recordChecksum(s_save_buf, n);
   if (!force && crc == _saved_crc) return;
 
   unsigned long t0 = millis();
   File f = SPIFFS.open(STATE_TMP, "w");
-  if (!f) return;
+  if (!f) { Serial.println("[HomeMesh] save: cannot open file"); return; }
   size_t written = f.write(s_save_buf, n);
   f.close();
-  if (written != n) { SPIFFS.remove(STATE_TMP); return; }
+  if (written != n) {
+    Serial.printf("[HomeMesh] save: wrote %u of %u bytes\n", (unsigned)written, (unsigned)n);
+    SPIFFS.remove(STATE_TMP);
+    return;
+  }
   SPIFFS.remove(STATE_FILE);
-  SPIFFS.rename(STATE_TMP, STATE_FILE);
+  bool renamed = SPIFFS.rename(STATE_TMP, STATE_FILE);
+  Serial.printf("[HomeMesh] saved %u bytes in %lu ms%s\n", (unsigned)n, millis() - t0, renamed ? "" : " (rename failed)");
   _saved_crc = crc;
   _m->diag.save_ms.add(millis() - t0, millis());
   _m->diag.saves++;
