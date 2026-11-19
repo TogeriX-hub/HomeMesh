@@ -212,6 +212,25 @@ static void titleBar(lv_obj_t* parent, const char* title, Action back_action = A
   label(r, title, F.button, T.text);
 }
 
+// Marks the containers meant to scroll; they must stay clickable to be dragged.
+static const lv_obj_flag_t SCROLLER = LV_OBJ_FLAG_USER_1;
+
+// Plain containers (rows, columns, badges, bars) are clickable by default in
+// LVGL and would swallow a tap meant for the row or button around them. After
+// a screen is built, every plain object without its own event handler and
+// without scrolling lets taps through to its parent.
+static void clickThrough(lv_obj_t* obj) {
+  uint32_t n = lv_obj_get_child_count(obj);
+  for (uint32_t i = 0; i < n; i++) {
+    lv_obj_t* c = lv_obj_get_child(obj, (int32_t)i);
+    if (lv_obj_check_type(c, &lv_obj_class) && lv_obj_get_event_count(c) == 0 &&
+        !lv_obj_has_flag(c, SCROLLER)) {
+      lv_obj_remove_flag(c, LV_OBJ_FLAG_CLICKABLE);
+    }
+    clickThrough(c);
+  }
+}
+
 // The first scroll area of a screen. When the same screen is rebuilt (new
 // message, new data) it keeps its scroll position.
 static lv_obj_t* s_scroll_area = nullptr;
@@ -224,6 +243,7 @@ static lv_obj_t* scrollArea(lv_obj_t* parent, int gap) {
   grow(s);
   lv_obj_add_flag(s, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_scroll_dir(s, LV_DIR_VER);
+  lv_obj_add_flag(s, SCROLLER);
   lv_obj_set_scrollbar_mode(s, LV_SCROLLBAR_MODE_OFF);
   return s;
 }
@@ -421,6 +441,7 @@ void HomeMeshUI::buildNow() {
     case View::Reminder:    buildReminder(scr); break;
     case View::Ring:        buildRing(scr); break;
   }
+  clickThrough(scr);
   lv_screen_load(scr);
   if (old) lv_obj_delete(old);
   if (s_scroll_to_end && (!same_view || was_at_end || s_scroll_to_end != s_scroll_area)) {
@@ -701,6 +722,7 @@ void HomeMeshUI::buildChannels(lv_obj_t* scr) {
   lv_obj_t* tabs = row(p, 8);
   lv_obj_add_flag(tabs, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_scroll_dir(tabs, LV_DIR_HOR);
+  lv_obj_add_flag(tabs, SCROLLER);
   lv_obj_set_scrollbar_mode(tabs, LV_SCROLLBAR_MODE_OFF);
   for (int i = 0; i < _m->channel_count; i++) {
     char name[40];
@@ -843,6 +865,7 @@ void HomeMeshUI::buildCompose(lv_obj_t* scr) {
     lv_obj_t* chips = row(p, 8);
     lv_obj_add_flag(chips, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scroll_dir(chips, LV_DIR_HOR);
+    lv_obj_add_flag(chips, SCROLLER);
     lv_obj_set_scrollbar_mode(chips, LV_SCROLLBAR_MODE_OFF);
     for (int i = 0; i < QUICK_REPLY_COUNT; i++) {
       lv_obj_t* c = button(chips, nullptr, BTN_OUTLINE, A_QUICK, i);

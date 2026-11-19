@@ -110,6 +110,8 @@ static void click(const char* text) {
   lv_obj_t* o = findByText(lv_screen_active(), text);
   while (o && !lv_obj_has_flag(o, LV_OBJ_FLAG_CLICKABLE)) o = lv_obj_get_parent(o);
   if (!o) { printf("not found: %s\n", text); return; }
+  // only objects with a handler react; anything else means a container swallowed the tap
+  if (lv_obj_get_event_count(o) == 0) printf("click on an object without handler: %s\n", text);
   lv_obj_send_event(o, LV_EVENT_CLICKED, nullptr);
   settle();
 }
@@ -166,7 +168,7 @@ int main(int argc, char** argv) {
     model.convs[1] = tmp;
     ui.refresh();
     settle();
-    bool ok = findByText(lv_screen_active(), "Nachbar Node") != nullptr;
+    bool ok = ui.view() == View::Chat && findByText(lv_screen_active(), "Nachbar Node") != nullptr;
     printf("chat after reorder: %s\n", ok ? "OK (same contact)" : "WRONG CONTACT");
     shot(out, "07b_chat_after_reorder");
     tmp = model.convs[0];
