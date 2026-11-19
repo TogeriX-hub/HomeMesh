@@ -1,7 +1,6 @@
 #include "UITask.h"
 
 #include <SPIFFS.h>
-#include <esp32-hal-psram.h>
 #include <esp_heap_caps.h>
 #include <helpers/TxtDataHelpers.h>
 #include <helpers/AdvertDataHelpers.h>
@@ -27,7 +26,7 @@ static const unsigned long SAVE_CHECK_MS = 30000;       // look for changes to s
 static const unsigned long SYNC_MS = 30000;              // re-read contacts and channels
 static const unsigned long ACK_MARGIN_MS = 3000;         // on top of MeshCore's estimate
 static const unsigned long APP_ACK_TIMEOUT_MS = 30000;   // app sends: no estimate from the hook
-static const int LV_BUF_LINES = 60;
+static const int LV_BUF_LINES = 20;
 static const int RP_TX_PIN = 19;   // UART to the RP2040, which drives the buzzer
 static const int RP_RX_PIN = 20;
 
@@ -45,12 +44,17 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   s_task = this;
   _display = display;
   _prefs = node_prefs;
+  Serial.printf("[HomeMesh] begin: psram free=%u internal free=%u\n",
+                (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+                (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 
-  _m = (Model*)ps_calloc(1, sizeof(Model));
-  s_save_buf = (uint8_t*)ps_malloc(PERSIST_MAX_BYTES);
-  s_channel_tmp = (Channel*)ps_calloc(MAX_CHANNELS, sizeof(Channel));
+  // heap_caps directly: Arduino's ps_malloc() returns nothing here, because
+  // psramFound() stays false although ESP-IDF already put the PSRAM into the heap
+  _m = (Model*)heap_caps_calloc(1, sizeof(Model), MALLOC_CAP_SPIRAM);
+  s_save_buf = (uint8_t*)heap_caps_malloc(PERSIST_MAX_BYTES, MALLOC_CAP_SPIRAM);
+  s_channel_tmp = (Channel*)heap_caps_calloc(MAX_CHANNELS, sizeof(Channel), MALLOC_CAP_SPIRAM);
   if (!_m || !s_save_buf || !s_channel_tmp) {
-    MESH_DEBUG_PRINTLN("HomeMesh: PSRAM allocation failed");
+    Serial.println("[HomeMesh] PSRAM allocation failed");
     return;
   }
   if (!_display) return;   // no screen: plain companion without UI
@@ -88,6 +92,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   syncChannels();
   updateClock();
   applyBrightness();
+  Serial.println("[HomeMesh] begin done");
 
   _last_millis = millis();
   _next_save_check_ms = millis() + SAVE_CHECK_MS;
@@ -100,13 +105,12 @@ void UITask::initLvgl() {
 
   lv_display_t* disp = lv_display_create(display.device()->width(), display.device()->height());
   lv_display_set_color_format(disp, LV_COLOR_FORMAT_RGB565);
-  // Draw buffer in PSRAM: internal RAM is needed by Bluetooth and Wi-Fi.
+  // Small draw buffer in internal RAM: drawing there is much faster than in
+  // PSRAM, and the panel's DMA keeps the PSRAM bandwidth for the frame buffer.
+  // (~19 KB; Bluetooth and Wi-Fi need the rest of the internal RAM.)
   size_t buf_bytes = (size_t)display.device()->width() * LV_BUF_LINES * 2;
-  void* buf = heap_caps_aligned_alloc(LV_DRAW_BUF_ALIGN, buf_bytes, MALLOC_CAP_SPIRAM);
-  if (!buf) {   // fewer lines still work
-    buf_bytes /= 4;
-    buf = heap_caps_aligned_alloc(LV_DRAW_BUF_ALIGN, buf_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_INTERNAL);
-  }
+  void* buf = heap_caps_aligned_alloc(LV_DRAW_BUF_ALIGN, buf_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  if (!buf) buf = heap_caps_aligned_alloc(LV_DRAW_BUF_ALIGN, buf_bytes, MALLOC_CAP_SPIRAM);
   lv_display_set_buffers(disp, buf, nullptr, buf_bytes, LV_DISPLAY_RENDER_MODE_PARTIAL);
   lv_display_set_flush_cb(disp, lvFlush);
 

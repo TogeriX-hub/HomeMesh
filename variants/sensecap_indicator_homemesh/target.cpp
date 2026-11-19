@@ -87,11 +87,32 @@ bool radio_init() {
 }
 
 #ifdef DISPLAY_CLASS
+// The touch controller (FT5x06 family, 0x48) shares I2C port 0 with the
+// radio's TCA9535. It is read through Arduino Wire like the expander, not
+// through LovyanGFX's own register-level I2C driver: two drivers on one port
+// get in each other's way. LovyanGFX only converts the raw coordinates.
 bool readTouch(int* x, int* y) {
+  static const uint8_t TOUCH_ADDR = 0x48;
   if (i2c_mutex && xSemaphoreTake(i2c_mutex, pdMS_TO_TICKS(20)) != pdTRUE) return false;
-  bool touched = display.getTouch(x, y);
+  uint8_t d[5] = {0};
+  bool ok = false;
+  Wire.beginTransmission(TOUCH_ADDR);
+  Wire.write(0x02);   // TD_STATUS, then XH XL YH YL of the first point
+  if (Wire.endTransmission(false) == 0 && Wire.requestFrom(TOUCH_ADDR, (uint8_t)5) == 5) {
+    for (int i = 0; i < 5; i++) d[i] = Wire.read();
+    ok = (d[0] & 0x0F) > 0;
+  }
   if (i2c_mutex) xSemaphoreGive(i2c_mutex);
-  return touched;
+  if (!ok) return false;
+  lgfx::touch_point_t tp;
+  tp.x = (int16_t)(((d[1] & 0x0F) << 8) | d[2]);
+  tp.y = (int16_t)(((d[3] & 0x0F) << 8) | d[4]);
+  tp.size = 1;
+  tp.id = 0;
+  display.device()->convertRawXY(&tp, 1);
+  *x = tp.x;
+  *y = tp.y;
+  return true;
 }
 #endif
 
